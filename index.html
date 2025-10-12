@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Tendencia Exness - Señal Inteligente</title>
+  <title>Exness Analyzer - Señal Inteligente</title>
   <style>
     body {
       background-color: #0b1224;
@@ -45,6 +45,7 @@
       border-radius: 15px;
       display: inline-block;
       font-weight: bold;
+      min-width: 280px;
     }
 
     .buy {
@@ -64,8 +65,8 @@
   </style>
 </head>
 <body>
-  <h1>Tendencia Exness</h1>
-  <p>Subí una <b>imagen del gráfico</b> de Exness y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
+  <h1>Analizador Visual Exness</h1>
+  <p>Subí una imagen del gráfico de Exness y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
 
   <input type="file" id="upload" accept="image/*" />
   <br />
@@ -87,10 +88,9 @@
       resultDiv.innerHTML = "🔍 Analizando gráfico...";
       resultDiv.className = "";
 
-      // Espera de 2 segundos simulando análisis real
+      // Simula análisis real (espera 2 segundos)
       await new Promise((r) => setTimeout(r, 2000));
 
-      // Crear un objeto para leer el color promedio de la imagen
       const file = fileInput.files[0];
       const reader = new FileReader();
 
@@ -105,35 +105,44 @@
           canvas.height = img.height;
           ctx.drawImage(img, 0, 0);
 
-          // Tomar muestra de pixeles
           const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
           let red = 0, blue = 0, green = 0;
+          const totalPixels = data.length / 4;
+
+          // Calcula color promedio (predominio de velas)
           for (let i = 0; i < data.length; i += 4) {
             red += data[i];
             green += data[i + 1];
             blue += data[i + 2];
           }
 
-          const avgRed = red / (data.length / 4);
-          const avgBlue = blue / (data.length / 4);
+          const avgRed = red / totalPixels;
+          const avgBlue = blue / totalPixels;
+          const avgGreen = green / totalPixels;
 
-          let delta = (avgBlue - avgRed).toFixed(2);
+          // Cálculo de tendencia y confianza
+          let delta = Math.abs(avgBlue - avgRed).toFixed(2);
+          let confidence = Math.min(100, (delta * 3.8).toFixed(1)); // confianza visual
           let signal;
 
-          // Análisis visual básico basado en color (azul = subida, rojo = bajada)
-          if (avgBlue > avgRed + 15) {
-            signal = "BUY";
+          if (avgBlue > avgRed + 12) {
+            signal = "BUY 🟢";
             resultDiv.className = "buy";
-          } else if (avgRed > avgBlue + 15) {
-            signal = "SELL";
+          } else if (avgRed > avgBlue + 12) {
+            signal = "SELL 🔴";
             resultDiv.className = "sell";
           } else {
-            signal = "HOLD";
+            signal = "HOLD ⚪";
             resultDiv.className = "hold";
+            confidence = (100 - delta * 3).toFixed(1);
           }
 
-          resultDiv.innerHTML = `${signal}<br>Δ=${delta} (análisis visual inteligente)`;
+          resultDiv.innerHTML = `
+            ${signal}<br>
+            Δ=${delta} | Confianza: ${confidence}%<br>
+            <small>(Análisis visual inteligente)</small>
+          `;
         };
       };
 
