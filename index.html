@@ -3,203 +3,357 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Exness Trend — Analizador Visual Mejorado</title>
+<title>Exness Trend — Analizador Rápido y Preciso</title>
 <style>
-  body{background:#071126;color:#e6eef8;font-family:Inter,Segoe UI,Arial;margin:0;padding:32px;text-align:center;}
-  h1{color:#61dafb;margin:0 0 8px}
-  p.sub{color:#bcd7ee;margin:0 0 18px}
-  .controls{margin:18px 0}
-  input[type=file]{padding:6px;background:#072033;border-radius:6px;color:#e6eef8}
-  button{background:#09a3ff;border:none;color:#00242b;padding:12px 24px;border-radius:12px;font-weight:700;cursor:pointer}
-  #result{margin-top:20px;padding:18px;border-radius:12px;display:inline-block;min-width:260px}
-  .buy{background:#16a34a;color:white}
+  :root{--bg:#071126;--muted:#9fbfdc;--accent:#09a3ff}
+  body{background:var(--bg);color:#e6eef8;font-family:Inter,Segoe UI,Arial;margin:0;padding:28px;text-align:center}
+  h1{color:#61dafb;margin:0 0 6px;font-size:1.6rem}
+  p.sub{color:var(--muted);margin:0 0 18px}
+  .controls{margin:14px 0;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  input[type=file]{background:#042033;border-radius:8px;color:#e6eef8;padding:8px}
+  button{background:var(--accent);border:none;color:#00242b;padding:10px 18px;border-radius:10px;font-weight:700;cursor:pointer}
+  #result{margin-top:20px;padding:16px;border-radius:12px;display:inline-block;min-width:280px}
+  .buy{background:#16a34a;color:#04201a}
   .sell{background:#dc2626;color:white}
   .hold{background:#facc15;color:#04201a}
-  #preview{margin-top:18px;max-width:90%;border-radius:8px;border:3px solid #0ea5e9}
-  small{display:block;color:#bcd7ee;margin-top:8px}
-  .meta{margin-top:12px;color:#9fbfdc}
+  #meta{margin-top:12px;color:var(--muted);font-size:0.9rem}
+  #previewWrap{position:relative;display:inline-block;margin-top:18px;border-radius:10px;overflow:hidden;border:3px solid #0ea5e9}
+  #preview{display:block;max-width:92vw;width:360px;height:auto}
+  canvas#overlay{position:absolute;left:0;top:0;pointer-events:none}
+  .timer{margin-top:12px;color:var(--muted);font-weight:700}
+  small{display:block;color:var(--muted);margin-top:6px}
+  .legend{margin-top:10px;color:var(--muted);font-size:0.85rem}
 </style>
 </head>
 <body>
-  <h1>Exness Trend — Analizador Visual</h1>
-  <p class="sub">Subí una captura del gráfico (1M recomendado). El sistema detecta velas, tendencia, breakout y te da una señal determinista.</p>
+  <h1>Exness Trend — Analizador Rápido y Mejorado</h1>
+  <p class="sub">Subí una captura del gráfico (1M recomendado). El sistema detecta velas, pendiente, breakout y te muestra una señal con flecha y timer.</p>
 
   <div class="controls">
     <input id="upload" type="file" accept="image/*" />
-    <button onclick="analyze()">🔍 Analizar Imagen</button>
+    <button id="btnAnalyze">⚡ Analizar Imagen</button>
+    <button id="btnCalibrate">🛠 Calibrar umbrales</button>
   </div>
 
   <div id="result" class="hold">Esperando imagen...</div>
-  <div class="meta" id="meta"></div>
-  <img id="preview" hidden alt="preview" />
-  <canvas id="c" style="display:none"></canvas>
+  <div id="meta"></div>
+  <div id="previewWrap" hidden>
+    <img id="preview" alt="preview" />
+    <canvas id="overlay"></canvas>
+  </div>
+  <div class="timer" id="timer"></div>
+  <div class="legend" id="legend">Indicador visual (velas detectadas → color): <span id="lbull">BULL</span> / <span id="lbear">BEAR</span></div>
 
 <script>
-/* --------------------------------------------------------------------------------
-   Algoritmo visual mejorado:
-   1) Escala la imagen a tamaño reducido (w x h)
-   2) Para cada columna x: detecta píxeles "no fondo" (bright) -> topY / bottomY
-   3) Agrupa columnas contiguas con presencia de "candle" para formar velas
-   4) Para cada vela: calcula midY (aprox price), y color dominante (blue/red)
-   5) Slope: regresión lineal de midY vs index -> pendiente
-   6) Breakout: compara última midY con mínimo/máximo previo
-   7) Score: combina pendiente + conteo velas consecutivas + breakout
-   8) Resultado determinista: BUY / SELL / HOLD + fuerza + tiempo sugerido
-   --------------------------------------------------------------------------------*/
+/*
+Optimized visual analyzer:
+- Downscale to small canvas (W x H) for speed.
+- Detect contiguous "candle" columns by brightness and color dominance.
+- Build candles (start,end,midY,color).
+- Compute linear regression slope of midY vs index (slopeNormalized).
+- Count consecutive bull/bear candles at the right (last N).
+- Detect breakout relative to prior window.
+- Score = slopeScore + candleScore + breakoutScore (deterministic).
+- Show result, draw arrow over original image, start countdown timer.
+- Fast: loops are minimal, no heavy math; designed to return <1s on mobile.
+*/
 
-function analyze(){
-  const f = document.getElementById('upload').files[0];
-  const resultDiv = document.getElementById('result');
-  const metaDiv = document.getElementById('meta');
-  const preview = document.getElementById('preview');
+const btn = document.getElementById('btnAnalyze');
+const upload = document.getElementById('upload');
+const resultEl = document.getElementById('result');
+const metaEl = document.getElementById('meta');
+const previewWrap = document.getElementById('previewWrap');
+const previewImg = document.getElementById('preview');
+const overlay = document.getElementById('overlay');
+const timerEl = document.getElementById('timer');
+const calibrateBtn = document.getElementById('btnCalibrate');
 
-  if(!f){ resultDiv.className='hold'; resultDiv.innerHTML='⚠️ Primero seleccioná una imagen.'; metaDiv.innerHTML=''; return; }
+// Parameters (expuestos para calibrar)
+let PARAMS = {
+  W: 260, H: 140, // processing resolution
+  bgThreshold: 18,
+  colorDiff: 18,
+  rightLookback: 6,
+  breakoutWindowPct: 0.3,
+  slopeFactor: 10,
+  breakoutPixelTol: 2,
+  strongScore: 4,
+  buyThreshold: 2,
+  sellThreshold: -2,
+  suggestedMinutesStrong: [4,8],
+  suggestedMinutesMedium: [3,6],
+  suggestedMinutesLow: [1,3]
+};
+
+btn.addEventListener('click', () => {
+  if (!upload.files[0]) { showMsg('⚠️ Seleccioná una imagen.'); return; }
+  fastAnalyze(upload.files[0]);
+});
+
+calibrateBtn.addEventListener('click', () => {
+  // Simple UI prompt to tweak a couple params for better fit (optional)
+  const newBg = prompt('Umbral brillo fondo (actual ' + PARAMS.bgThreshold + ')', PARAMS.bgThreshold);
+  if (newBg !== null) PARAMS.bgThreshold = Math.max(6, Math.min(80, parseInt(newBg) || PARAMS.bgThreshold));
+  showMsg('Parámetros actualizados. Prueba con tus capturas.');
+});
+
+function showMsg(txt) {
+  resultEl.className = 'hold';
+  resultEl.innerHTML = txt;
+  metaEl.innerHTML = '';
+  timerEl.innerHTML = '';
+}
+
+// Main fast analyzer
+async function fastAnalyze(file) {
+  resultEl.innerHTML = 'Analizando imagen... ⏳';
+  resultEl.className = 'hold';
+  metaEl.innerHTML = '';
+  timerEl.innerHTML = '';
+  previewWrap.hidden = true;
 
   const reader = new FileReader();
   reader.onload = () => {
-    const img = new Image();
-    img.onload = () => processImage(img);
-    img.src = reader.result;
-    preview.src = reader.result;
-    preview.hidden = false;
+    previewImg.onload = () => process(previewImg);
+    previewImg.src = reader.result;
   };
-  reader.readAsDataURL(f);
+  reader.readAsDataURL(file);
 }
 
-function processImage(img){
-  // parámetros
-  const w = 250; const h = 140; // resolución reducida: rápido y suficiente
-  const canvas = document.getElementById('c'); canvas.width=w; canvas.height=h;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img,0,0,w,h);
+function process(img) {
+  // draw preview and overlay sized equal to displayed image
+  previewWrap.hidden = false;
+  const displayW = Math.min(760, img.naturalWidth, 360); // limit preview width for UX
+  previewImg.style.width = displayW + 'px';
+  previewImg.style.height = 'auto';
+
+  // overlay same size
+  overlay.width = previewImg.clientWidth;
+  overlay.height = previewImg.clientHeight;
+  overlay.style.width = previewImg.style.width;
+  overlay.style.height = previewImg.style.height;
+
+  // create small processing canvas
+  const w = PARAMS.W, h = PARAMS.H;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  // fast draw scaled image to processing canvas (cover mode)
+  // center-crop to preserve candle area
+  const arSrc = img.naturalWidth / img.naturalHeight;
+  const arDst = w / h;
+  let sx=0, sy=0, sW=img.naturalWidth, sH=img.naturalHeight;
+  if (arSrc > arDst) {
+    // crop left/right
+    sW = Math.round(img.naturalHeight * arDst);
+    sx = Math.round((img.naturalWidth - sW)/2);
+  } else {
+    // crop top/bottom
+    sH = Math.round(img.naturalWidth / arDst);
+    sy = Math.round((img.naturalHeight - sH)/2);
+  }
+  ctx.drawImage(img, sx, sy, sW, sH, 0, 0, w, h);
   const im = ctx.getImageData(0,0,w,h);
   const data = im.data;
 
-  // detectar columnas con "candle" pixeles
-  const colInfo = []; // {has:boolean, top:int, bottom:int, avgR,avgG,avgB}
-  const bgThreshold = 18; // pixels con brillo menor se consideran fondo oscuro
-  for(let x=0;x<w;x++){
-    let top = null, bottom = null, sumR=0,sumG=0,sumB=0,count=0;
-    for(let y=0;y<h;y++){
+  // --- column analysis (fast loops)
+  const colInfo = new Array(w);
+  const bgT = PARAMS.bgThreshold;
+  for (let x=0; x<w; x++) {
+    let top=null, bottom=null, sumR=0,sumG=0,sumB=0,count=0;
+    // iterate rows top->bottom (y)
+    for (let y=0; y<h; y++) {
       const i = (y*w + x)*4;
       const r = data[i], g = data[i+1], b = data[i+2];
-      const bright = (r+g+b)/3;
-      // consideramos píxel de vela si es mucho más brillante que fondo o color distintivo
-      if(bright > bgThreshold || r>40 || b>40){
-        if(top===null) top = y;
+      const bright = (r + g + b)/3;
+      // consider pixel as part of candle if brighter than bgT or colored significantly
+      if (bright > bgT || r>50 || b>50) {
+        if (top === null) top = y;
         bottom = y;
         sumR += r; sumG += g; sumB += b; count++;
       }
     }
-    if(count>0){
-      colInfo.push({has:true, top:top, bottom:bottom, avgR:sumR/count, avgG:sumG/count, avgB:sumB/count});
+    if (count > 0) {
+      colInfo[x] = {has:true, top:top, bottom:bottom, avgR:sumR/count, avgG:sumG/count, avgB:sumB/count};
     } else {
-      colInfo.push({has:false});
+      colInfo[x] = {has:false};
     }
   }
 
-  // Agrupar columnas contiguas con has=true -> velas
-  const candles = []; // {start,end,midY,avgColor}
-  let i=0;
-  while(i<w){
-    if(!colInfo[i].has){ i++; continue; }
-    let j=i;
-    let sumMid=0, cnt=0, sumR=0,sumG=0,sumB=0;
-    while(j<w && colInfo[j].has){
-      const mid = (colInfo[j].top + colInfo[j].bottom)/2;
+  // --- group columns into candles
+  const candles = [];
+  let x=0;
+  while (x < w) {
+    if (!colInfo[x].has) { x++; continue; }
+    let start = x, sumMid=0, cnt=0, sumR=0,sumG=0,sumB=0;
+    while (x<w && colInfo[x].has) {
+      const mid = (colInfo[x].top + colInfo[x].bottom)/2;
       sumMid += mid; cnt++;
-      sumR += colInfo[j].avgR; sumG += colInfo[j].avgG; sumB += colInfo[j].avgB;
-      j++;
+      sumR += colInfo[x].avgR; sumG += colInfo[x].avgG; sumB += colInfo[x].avgB;
+      x++;
     }
-    const midY = sumMid/cnt;
-    const avgR = sumR/cnt, avgG = sumG/cnt, avgB = sumB/cnt;
-    // decidir color: si avgB claramente mayor -> bullish; si avgR mayor -> bearish
+    const midY = sumMid / cnt;
+    const avgR = sumR / cnt, avgG = sumG / cnt, avgB = sumB / cnt;
     let color = 'neutral';
-    if(avgB > avgR + 18) color = 'bull';
-    else if(avgR > avgB + 18) color = 'bear';
-    candles.push({start:i,end:j-1,midY:midY,avgR:avgR,avgG:avgG,avgB:avgB,color:color});
-    i = j;
+    if (avgB > avgR + PARAMS.colorDiff) color = 'bull';
+    else if (avgR > avgB + PARAMS.colorDiff) color = 'bear';
+    candles.push({start:start, end:x-1, midY:midY, avgR,avgG,avgB, color});
   }
 
-  if(candles.length < 3){
-    document.getElementById('result').className='hold';
-    document.getElementById('result').innerHTML = 'HOLD<br><small>No se detectaron suficientes velas en la imagen.</small>';
-    document.getElementById('meta').innerHTML = 'Asegurate de subir una captura con la zona de velas visible (sin recortar demasiado).';
+  // if too few candles, fallback: evaluate brightness diff quick
+  if (candles.length < 4) {
+    // brightness top vs bottom quick check
+    let topSum=0,bottomSum=0;
+    for (let y=0;y<h;y++){
+      let rowSum=0;
+      for (let xx=0; xx<w; xx++){
+        const i=(y*w+xx)*4; rowSum += (data[i]+data[i+1]+data[i+2])/3;
+      }
+      if (y < h/2) topSum += rowSum; else bottomSum += rowSum;
+    }
+    const diff = (bottomSum - topSum)/(w*h);
+    finalizeAndDisplay(null, diff*0.02, 0, 0, false, false, candles, ctx, img);
     return;
   }
 
-  // construir array de midY (para regresión) e indices
-  const mids = candles.map((c, idx) => ({x: idx, y: c.midY}));
-  // regresión lineal simple (slope)
-  let sumX=0, sumY=0, sumXY=0, sumXX=0;
-  for(const p of mids){ sumX += p.x; sumY += p.y; sumXY += p.x*p.y; sumXX += p.x*p.x; }
-  const n = mids.length;
-  const slope = (n*sumXY - sumX*sumY) / (n*sumXX - sumX*sumX + 1e-9); // píxels por candle
-  // convertir slope en "pendiente de precio" (y coord crece hacia abajo => slope<0 => subida)
-  const slopeNormalized = -slope; // invertimos para que + => subida
+  // --- regression slope from midY
+  let sumX=0,sumY=0,sumXY=0,sumXX=0;
+  for (let i=0; i<candles.length; i++) {
+    const xVal = i;
+    const yVal = candles[i].midY;
+    sumX += xVal; sumY += yVal; sumXY += xVal*yVal; sumXX += xVal*xVal;
+  }
+  const n = candles.length;
+  const slope = (n*sumXY - sumX*sumY) / (n*sumXX - sumX*sumX + 1e-9); // pixels per candle
+  const slopeNormalized = -slope; // invert: positive => upward
 
-  // contar velas finales consecutivas del mismo color (miramos últimas 6 velas)
-  const look = 6;
-  let lastIndex = candles.length -1;
-  let consBull = 0, consBear = 0;
-  for(let k=lastIndex; k>=Math.max(0,lastIndex-look+1); k--){
-    if(candles[k].color === 'bull'){ consBull++; consBear=0; }
-    else if(candles[k].color === 'bear'){ consBear++; consBull=0; }
-    else { break; }
+  // --- consecutive candles at right
+  const look = PARAMS.rightLookback;
+  let consBull=0, consBear=0;
+  for (let k = candles.length-1; k >= Math.max(0,candles.length - look); k--) {
+    const c = candles[k];
+    if (c.color === 'bull') { consBull++; consBear=0; }
+    else if (c.color === 'bear') { consBear++; consBull=0; }
+    else break;
   }
 
-  // breakout: comparar última midY con minima/máxima del 30% previo
-  const checkWindow = Math.max(3, Math.floor(candles.length * 0.3));
-  const prevSlice = candles.slice(0, candles.length - 1 - 1).slice(-checkWindow); // excluir última vela
+  // --- breakout detection (compare last mid vs prior window)
+  const checkWindow = Math.max(3, Math.floor(candles.length * PARAMS.breakoutWindowPct));
+  const prevSlice = candles.slice(Math.max(0, candles.length - 1 - checkWindow), candles.length - 1);
   let prevMin = Infinity, prevMax = -Infinity;
-  for(const c of prevSlice){ if(c.midY < prevMin) prevMin = c.midY; if(c.midY > prevMax) prevMax = c.midY; }
+  for (const c of prevSlice) { if (c.midY < prevMin) prevMin = c.midY; if (c.midY > prevMax) prevMax = c.midY; }
   const lastMid = candles[candles.length-1].midY;
-  // recuerden coordenada: menor y = precio más alto
   let breakoutUp = false, breakoutDown = false;
-  if(prevMin !== Infinity && lastMid < prevMin - 2) breakoutUp = true; // superó máximo visual previo (midY menor)
-  if(prevMax !== -Infinity && lastMid > prevMax + 2) breakoutDown = true;
+  if (prevMin !== Infinity && lastMid < prevMin - PARAMS.breakoutPixelTol) breakoutUp = true;
+  if (prevMax !== -Infinity && lastMid > prevMax + PARAMS.breakoutPixelTol) breakoutDown = true;
 
-  // Score: combinar métricas
-  // slope score: escala slopeNormalized (pix) a rango
-  const slopeScore = slopeNormalized * 10; // factor empírico
+  // --- score components
+  const slopeScore = slopeNormalized * PARAMS.slopeFactor;
   const candleScore = (consBull >= 3 ? 2.0 : (consBull >=2 ? 1.0:0)) - (consBear >=3 ? 2.0 : (consBear>=2 ? 1.0:0));
   const breakoutScore = breakoutUp ? 2.0 : (breakoutDown ? -2.0 : 0);
   const rawScore = slopeScore + candleScore + breakoutScore;
 
-  // decidir
-  let decision = 'HOLD', cls='hold';
-  if(rawScore >= 2.0) { decision='BUY'; cls='buy'; }
-  else if(rawScore <= -2.0) { decision='SELL'; cls='sell'; }
-  else { decision='HOLD'; cls='hold'; }
-
-  // fuerza textual
-  const absScore = Math.abs(rawScore);
-  let force = 'Baja';
-  if(absScore > 4) force = 'Alta';
-  else if(absScore > 2) force = 'Media';
-
-  // sugerencia de tiempo en 1M
-  let suggestedMinutes = '2–5 min (scalp)';
-  if(force === 'Alta') suggestedMinutes = '4–8 min';
-  else if(force === 'Baja') suggestedMinutes = '1–3 min (muy corto)';
-
-  // mostrar info
-  const resEl = document.getElementById('result');
-  resEl.className = cls;
-  resEl.innerHTML = `<b>${decision}</b><br><small>Δvisual=${rawScore.toFixed(2)} • Fuerza: ${force}</small><br><small>Tiempo sugerido (1M): ${suggestedMinutes}</small>`;
-
-  // detalle meta (para debugging / transparencia)
-  const details = [
-    `Pendiente (norm): ${slopeNormalized.toFixed(3)}`,
-    `Velas finales: bull=${consBull}, bear=${consBear}`,
-    `BreakoutUp=${breakoutUp} BreakoutDown=${breakoutDown}`,
-    `Componentes: slopeScore=${slopeScore.toFixed(2)}, candleScore=${candleScore.toFixed(2)}, breakout=${breakoutScore.toFixed(2)}`
-  ];
-  document.getElementById('meta').innerHTML = details.join(' • ');
+  finalizeAndDisplay(candles, rawScore, slopeNormalized, candleScore, breakoutUp, breakoutDown, candles, ctx, img);
 }
 
-/* Nota: los umbrales (bgThreshold, diferencia de color, factor slope) son empíricos.
-   Si querés, puedo ajustar los umbrales según capturas reales tuyas para mejorar la precisión. */
+// finalize display, draw arrow & timer
+function finalizeAndDisplay(candles, rawScore, slopeNormalized, candleScore, breakoutUp, breakoutDown, candlesList, procCtx, img) {
+  // decision
+  let decision='HOLD', cls='hold';
+  if (rawScore >= PARAMS.buyThreshold) { decision='BUY'; cls='buy'; }
+  else if (rawScore <= PARAMS.sellThreshold) { decision='SELL'; cls='sell'; }
+  else decision='HOLD';
+  // force
+  const absS = Math.abs(rawScore);
+  let force='Baja';
+  if (absS > PARAMS.strongScore) force='Alta';
+  else if (absS > 2) force='Media';
+  // suggested minutes
+  let suggested = PARAMS.suggestedMinutesLow;
+  if (force === 'Alta') suggested = PARAMS.suggestedMinutesStrong;
+  else if (force === 'Media') suggested = PARAMS.suggestedMinutesMedium;
+
+  // show main box
+  const resEl = resultEl;
+  resEl.className = cls;
+  resEl.innerHTML = `<b>${decision}</b><br><small>Δvisual=${rawScore.toFixed(2)} • Fuerza: ${force}</small><br><small>Tiempo sugerido (1M): ${suggested[0]}–${suggested[1]} min</small>`;
+
+  // meta info
+  metaEl.innerHTML = `Pendiente≈${slopeNormalized.toFixed(3)} • compVelas=${candleScore.toFixed(2)} • breakoutUp=${breakoutUp} • breakoutDown=${breakoutDown}`;
+
+  // Draw arrow overlay on preview image (fast)
+  drawArrowOverlay(decision, slopeNormalized);
+
+  // Start timer if BUY/SELL
+  if (decision === 'BUY' || decision === 'SELL') {
+    startCountdown((suggested[0]+suggested[1])/2 * 60); // seconds avg
+  } else {
+    timerEl.innerHTML = '';
+  }
+}
+
+// Draw arrow and small indicators on overlay canvas
+function drawArrowOverlay(decision, slope) {
+  const ov = overlay;
+  const ctx = ov.getContext('2d');
+  ctx.clearRect(0,0,ov.width,ov.height);
+  if (decision === 'HOLD') return;
+
+  // Arrow position: near top-right corner of the preview image
+  const margin = 12;
+  const x = ov.width - 80;
+  const y = 60;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = decision === 'BUY' ? '#16a34a' : '#dc2626';
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.lineJoin = 'round';
+  // rotate arrow slightly according to slope
+  const maxAngle = 0.7; // radians
+  const angle = Math.max(-maxAngle, Math.min(maxAngle, slope * 0.35));
+  ctx.rotate(angle);
+
+  // arrow shape
+  ctx.beginPath();
+  if (decision === 'BUY') {
+    ctx.moveTo(-20, 20);
+    ctx.lineTo(0, -20);
+    ctx.lineTo(20, 20);
+    ctx.closePath();
+    ctx.fill();
+    // stem
+    ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, 28); ctx.stroke();
+  } else {
+    // SELL: arrow down
+    ctx.moveTo(-20, -20);
+    ctx.lineTo(0, 20);
+    ctx.lineTo(20, -20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, 20); ctx.lineTo(0, -28); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Timer: shows countdown mm:ss (fast)
+let countdownTimerId = null;
+function startCountdown(seconds) {
+  // clamp for safety (1M environment)
+  seconds = Math.max(20, Math.min(60*15, Math.round(seconds)));
+  if (countdownTimerId) { clearInterval(countdownTimerId); countdownTimerId = null; }
+  const end = Date.now() + seconds*1000;
+  updateTimer();
+  countdownTimerId = setInterval(updateTimer, 250);
+  function updateTimer() {
+    const rem = Math.max(0, Math.round((end - Date.now())/1000));
+    const mm = Math.floor(rem/60).toString().padStart(2,'0');
+    const ss = (rem%60).toString().padStart(2,'0');
+    timerEl.innerHTML = `⏱ Cerrar aprox en: ${mm}:${ss}`;
+    if (rem <= 0) { clearInterval(countdownTimerId); countdownTimerId = null; timerEl.innerHTML = '⏱ Tiempo sugerido expirado'; }
+  }
+}
+
 </script>
 </body>
 </html>
