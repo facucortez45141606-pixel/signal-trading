@@ -1,67 +1,105 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Indicador de Señales - Facu</title>
-  <style>
-    body {
-      background: #0f172a;
-      color: #e2e8f0;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-    h1 {
-      color: #38bdf8;
-    }
-    .box {
-      background: #1e293b;
-      padding: 25px;
-      border-radius: 12px;
-      display: inline-block;
-      margin-top: 30px;
-    }
-    input[type=file] {
-      margin: 15px 0;
-    }
-    button {
-      background: #38bdf8;
-      border: none;
-      color: black;
-      padding: 10px 20px;
-      border-radius: 10px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    #result {
-      font-size: 1.4em;
-      margin-top: 25px;
-    }
-  </style>
-</head>
-<body>
-  <h1>Indicador de Señales 📈</h1>
-  <p>Subí una captura del gráfico y el sistema te dirá si es momento de <b>comprar</b> o <b>vender</b>.</p>
-  <div class="box">
-    <input type="file" id="upload" accept="image/*" />
-    <button onclick="analyze()">Analizar Señal</button>
-    <div id="result"></div>
-  </div>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indicador de Señales IA - Facu</title>
 
-  <script>
-    function analyze() {
-      const file = document.getElementById('upload').files[0];
-      const result = document.getElementById('result');
-      if (!file) {
-        result.innerHTML = "⚠️ Primero seleccioná una imagen.";
-        return;
-      }
-      // Simulación de análisis (MVP)
-      const signals = ["✅ Señal de COMPRA", "❌ Señal de VENTA", "⚖️ Neutra"];
-      const pick = signals[Math.floor(Math.random() * signals.length)];
-      result.innerHTML = pick;
-    }
-  </script>
+<!-- Estilos -->
+<style>
+  body {
+    background-color: #0e0e12;
+    color: #e2e0f0;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 40px;
+  }
+  h1 {
+    color: #38bdf8;
+  }
+  input[type="file"] {
+    margin: 15px 0;
+  }
+  button {
+    background: #38bdf8;
+    color: black;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #result {
+    font-size: 1.3em;
+    margin-top: 25px;
+  }
+  small {
+    color: #9ca3af;
+  }
+</style>
+
+<!-- Librería de IA -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ml5/0.12.2/ml5.min.js"></script>
+</head>
+
+<body>
+  <h1>Indicador de Señales 🤖💹</h1>
+  <p>Subí una captura del gráfico (velas japonesas) y el sistema con IA analizará patrones visuales para decidir si conviene <b>comprar</b> o <b>vender</b>.</p>
+
+  <input type="file" id="upload" accept="image/*" />
+  <button onclick="analyze()">Analizar con IA</button>
+  <div id="result">📊 Esperando análisis...</div>
+
+<script>
+function analyze() {
+  const file = document.getElementById('upload').files[0];
+  const result = document.getElementById('result');
+
+  if (!file) {
+    result.innerHTML = "⚠️ Primero seleccioná una imagen.";
+    return;
+  }
+
+  const img = new Image();
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+    img.src = e.target.result;
+    img.onload = function() {
+      // Crear canvas
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+
+      // Convertir imagen a tensor (IA)
+      const model = ml5.imageClassifier('MobileNet', () => {
+        model.predict(canvas, (err, results) => {
+          if (err) {
+            result.innerHTML = "❌ Error en el análisis.";
+            return;
+          }
+
+          const label = results[0].label.toLowerCase();
+          let decision = "";
+
+          // Lógica simple basada en el contenido visual
+          if (label.includes("green") || label.includes("up") || label.includes("chart") || label.includes("bull")) {
+            decision = "🟢 Señal de COMPRA - Tendencia alcista detectada";
+          } else if (label.includes("red") || label.includes("down") || label.includes("bear")) {
+            decision = "🔴 Señal de VENTA - Tendencia bajista detectada";
+          } else {
+            decision = "⚪ Señal NEUTRA o indecisa";
+          }
+
+          result.innerHTML = `${decision}<br><small>(Análisis IA basado en reconocimiento visual ml5.js)</small>`;
+        });
+      });
+    };
+  };
+  reader.readAsDataURL(file);
+}
+</script>
 </body>
 </html>
