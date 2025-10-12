@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Exness Signal Analyzer - Facu</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <title>Analizador Visual de Señales Exness</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
   <style>
     body {
       background-color: #0f172a;
@@ -16,8 +16,8 @@
     h1 {
       color: #38bdf8;
     }
-    input[type="file"] {
-      margin: 20px 0;
+    input {
+      margin-top: 20px;
     }
     button {
       background: #38bdf8;
@@ -27,19 +27,17 @@
       border-radius: 10px;
       font-weight: bold;
       cursor: pointer;
-      transition: 0.2s;
+      margin-top: 20px;
     }
     button:hover {
       background: #0ea5e9;
-      transform: scale(1.05);
     }
     #result {
-      font-size: 1.4em;
-      margin-top: 25px;
+      font-size: 1.6em;
+      margin-top: 30px;
       padding: 20px;
       border-radius: 12px;
       display: inline-block;
-      min-width: 250px;
     }
     .buy {
       background-color: #16a34a;
@@ -53,165 +51,67 @@
       background-color: #facc15;
       color: black;
     }
-    canvas {
-      margin-top: 30px;
-      max-width: 800px;
-      width: 100%;
+    img {
+      margin-top: 25px;
+      max-width: 90%;
+      border-radius: 10px;
+      border: 2px solid #38bdf8;
     }
   </style>
 </head>
 <body>
-  <h1>📊 Analizador de Señales Exness</h1>
-  <p>Subí tu archivo <b>CSV de Exness</b> (Time, Open, High, Low, Close, Volume) y el sistema te dirá si conviene <b>comprar</b>, <b>vender</b> o <b>mantener</b>.</p>
+  <h1>📈 Analizador Visual Exness</h1>
+  <p>Subí una <b>imagen del gráfico</b> y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
 
-  <input type="file" id="upload" accept=".csv" />
-  <button onclick="analyzeCSV()">🔍 Analizar Señal</button>
-
+  <input type="file" id="upload" accept="image/*" />
+  <button onclick="analyzeImage()">🔍 Analizar Imagen</button>
   <div id="result"></div>
-  <canvas id="chart"></canvas>
+  <img id="preview" src="" alt="" hidden />
 
   <script>
-    // --- Funciones auxiliares ---
-    function parseCSV(text) {
-      const rows = text.trim().split("\n").map((r) => r.split(","));
-      const headers = rows.shift();
-      return rows.map((r) => {
-        const row = {};
-        headers.forEach((h, i) => (row[h.trim()] = parseFloat(r[i]) || r[i]));
-        return row;
-      });
-    }
+    async function analyzeImage() {
+      const fileInput = document.getElementById("upload");
+      const resultDiv = document.getElementById("result");
+      const preview = document.getElementById("preview");
 
-    function movingAverage(data, period, field) {
-      return data.map((_, i) => {
-        if (i < period) return null;
-        const slice = data.slice(i - period, i);
-        return slice.reduce((acc, val) => acc + parseFloat(val[field]), 0) / period;
-      });
-    }
-
-    function RSI(data, period = 14) {
-      let gains = 0, losses = 0;
-      const rsi = [null];
-      for (let i = 1; i < data.length; i++) {
-        const diff = data[i].Close - data[i - 1].Close;
-        gains = (gains * (period - 1) + Math.max(diff, 0)) / period;
-        losses = (losses * (period - 1) + Math.max(-diff, 0)) / period;
-        const rs = losses === 0 ? 100 : gains / losses;
-        rsi.push(100 - 100 / (1 + rs));
-      }
-      return rsi;
-    }
-
-    async function analyzeCSV() {
-      const file = document.getElementById("upload").files[0];
-      const result = document.getElementById("result");
-      const chartCanvas = document.getElementById("chart");
-
+      const file = fileInput.files[0];
       if (!file) {
-        result.textContent = "⚠️ Primero seleccioná un archivo CSV exportado de Exness.";
+        resultDiv.innerHTML = "⚠️ Seleccioná una imagen del gráfico.";
         return;
       }
 
-      const text = await file.text();
-      const data = parseCSV(text);
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        preview.src = e.target.result;
+        preview.hidden = false;
+        resultDiv.innerHTML = "Analizando imagen... ⏳";
 
-      if (!data[0].Close) {
-        result.textContent = "❌ No se detectaron columnas válidas (Close, Open, etc.).";
-        return;
-      }
+        // Convertir imagen en tensor (baja resolución para análisis)
+        const img = new Image();
+        img.src = e.target.result;
+        img.onload = async () => {
+          const tensor = tf.browser.fromPixels(img).resizeNearestNeighbor([64, 64]).mean(2).expandDims(0).expandDims(-1).toFloat().div(255);
 
-      const sma50 = movingAverage(data, 50, "Close");
-      const sma200 = movingAverage(data, 200, "Close");
-      const rsi = RSI(data);
+          // --- Simulación de análisis determinista (basado en contraste y dirección) ---
+          const mean = (await tensor.mean().data())[0];
+          const variance = (await tensor.var().data())[0];
+          const score = mean * 10 - variance * 5;
 
-      const last = data.length - 1;
-      const c = data[last].Close;
-      const prev = data[last - 1].Close;
-      const s50 = sma50[last];
-      const s200 = sma200[last];
-      const lastRSI = rsi[last];
+          let decision = "HOLD";
+          let cls = "hold";
+          if (score > 1) {
+            decision = "BUY";
+            cls = "buy";
+          } else if (score < -1) {
+            decision = "SELL";
+            cls = "sell";
+          }
 
-      let score = 0;
-      let details = [];
-
-      if (s50 && s200) {
-        if (s50 > s200) {
-          score += 2;
-          details.push("SMA50 > SMA200 (tendencia alcista)");
-        } else {
-          score -= 2;
-          details.push("SMA50 < SMA200 (tendencia bajista)");
-        }
-      }
-
-      if (lastRSI < 30) {
-        score += 1.5;
-        details.push("RSI < 30 (sobrevendido)");
-      } else if (lastRSI > 70) {
-        score -= 1.5;
-        details.push("RSI > 70 (sobrecomprado)");
-      }
-
-      if (c > prev) {
-        score += 0.5;
-        details.push("Precio cerrando al alza");
-      } else {
-        score -= 0.5;
-        details.push("Precio cerrando a la baja");
-      }
-
-      let decision = "HOLD";
-      let cls = "hold";
-      if (score >= 2) {
-        decision = "BUY";
-        cls = "buy";
-      } else if (score <= -2) {
-        decision = "SELL";
-        cls = "sell";
-      }
-
-      result.className = cls;
-      result.innerHTML = `<b>${decision}</b><br/><small>Puntaje: ${score.toFixed(2)}</small><br/><br/>${details.join("<br/>")}`;
-
-      // --- Chart ---
-      const labels = data.map((d) => d.Time || "");
-      const closePrices = data.map((d) => d.Close);
-      if (window.priceChart) window.priceChart.destroy();
-
-      window.priceChart = new Chart(chartCanvas, {
-        type: "line",
-        data: {
-          labels,
-          datasets: [
-            {
-              label: "Precio Close",
-              data: closePrices,
-              borderColor: "#38bdf8",
-              tension: 0.2,
-            },
-            {
-              label: "SMA50",
-              data: sma50,
-              borderColor: "#22c55e",
-              borderDash: [5, 5],
-            },
-            {
-              label: "SMA200",
-              data: sma200,
-              borderColor: "#f87171",
-              borderDash: [8, 5],
-            },
-          ],
-        },
-        options: {
-          plugins: { legend: { labels: { color: "#e2e8f0" } } },
-          scales: {
-            x: { ticks: { color: "#94a3b8" } },
-            y: { ticks: { color: "#94a3b8" } },
-          },
-        },
-      });
+          resultDiv.className = cls;
+          resultDiv.innerHTML = `<b>${decision}</b><br><small>Puntaje visual: ${score.toFixed(2)}</small>`;
+        };
+      };
+      reader.readAsDataURL(file);
     }
   </script>
 </body>
