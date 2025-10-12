@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Indicador de Señales - Facu</title>
+  <title>Exness Signal Analyzer - Facu</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
       background-color: #0f172a;
@@ -16,7 +17,7 @@
       color: #38bdf8;
     }
     input[type="file"] {
-      margin: 15px 0;
+      margin: 20px 0;
     }
     button {
       background: #38bdf8;
@@ -26,7 +27,7 @@
       border-radius: 10px;
       font-weight: bold;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: 0.2s;
     }
     button:hover {
       background: #0ea5e9;
@@ -52,52 +53,51 @@
       background-color: #facc15;
       color: black;
     }
+    canvas {
+      margin-top: 30px;
+      max-width: 800px;
+      width: 100%;
+    }
   </style>
 </head>
 <body>
-  <h1>📊 Indicador de Señales Determinista</h1>
-  <p>
-    Sube un archivo CSV con columnas <b>Date, Open, High, Low, Close, Volume</b>
-    y el sistema te dirá si es momento de <b>comprar</b>, <b>vender</b> o <b>mantener</b>.
-  </p>
+  <h1>📊 Analizador de Señales Exness</h1>
+  <p>Subí tu archivo <b>CSV de Exness</b> (Time, Open, High, Low, Close, Volume) y el sistema te dirá si conviene <b>comprar</b>, <b>vender</b> o <b>mantener</b>.</p>
 
   <input type="file" id="upload" accept=".csv" />
   <button onclick="analyzeCSV()">🔍 Analizar Señal</button>
 
   <div id="result"></div>
+  <canvas id="chart"></canvas>
 
   <script>
+    // --- Funciones auxiliares ---
     function parseCSV(text) {
       const rows = text.trim().split("\n").map((r) => r.split(","));
       const headers = rows.shift();
-      const data = rows.map((r) => {
+      return rows.map((r) => {
         const row = {};
-        headers.forEach((h, i) => (row[h.trim()] = parseFloat(r[i])));
+        headers.forEach((h, i) => (row[h.trim()] = parseFloat(r[i]) || r[i]));
         return row;
       });
-      return data;
     }
 
     function movingAverage(data, period, field) {
       return data.map((_, i) => {
         if (i < period) return null;
         const slice = data.slice(i - period, i);
-        return slice.reduce((acc, val) => acc + val[field], 0) / period;
+        return slice.reduce((acc, val) => acc + parseFloat(val[field]), 0) / period;
       });
     }
 
     function RSI(data, period = 14) {
+      let gains = 0, losses = 0;
       const rsi = [null];
       for (let i = 1; i < data.length; i++) {
-        const change = data[i].Close - data[i - 1].Close;
-        let gain = 0, loss = 0;
-        if (change > 0) gain = change;
-        if (change < 0) loss = -change;
-        const avgGain = (rsi.avgGain || 0) * (period - 1) / period + gain / period;
-        const avgLoss = (rsi.avgLoss || 0) * (period - 1) / period + loss / period;
-        rsi.avgGain = avgGain;
-        rsi.avgLoss = avgLoss;
-        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        const diff = data[i].Close - data[i - 1].Close;
+        gains = (gains * (period - 1) + Math.max(diff, 0)) / period;
+        losses = (losses * (period - 1) + Math.max(-diff, 0)) / period;
+        const rs = losses === 0 ? 100 : gains / losses;
         rsi.push(100 - 100 / (1 + rs));
       }
       return rsi;
@@ -106,45 +106,45 @@
     async function analyzeCSV() {
       const file = document.getElementById("upload").files[0];
       const result = document.getElementById("result");
+      const chartCanvas = document.getElementById("chart");
+
       if (!file) {
-        result.textContent = "⚠️ Primero seleccioná un archivo CSV.";
+        result.textContent = "⚠️ Primero seleccioná un archivo CSV exportado de Exness.";
         return;
       }
 
       const text = await file.text();
       const data = parseCSV(text);
-      if (data.length < 20 || !data[0].Close) {
-        result.textContent = "❌ Archivo inválido. Asegurate de tener columnas Date, Open, High, Low, Close, Volume.";
+
+      if (!data[0].Close) {
+        result.textContent = "❌ No se detectaron columnas válidas (Close, Open, etc.).";
         return;
       }
 
-      // Cálculo determinista
       const sma50 = movingAverage(data, 50, "Close");
       const sma200 = movingAverage(data, 200, "Close");
       const rsi = RSI(data);
 
       const last = data.length - 1;
-      const close = data[last].Close;
-      const prevClose = data[last - 1].Close;
-      const lastRSI = rsi[last];
+      const c = data[last].Close;
+      const prev = data[last - 1].Close;
       const s50 = sma50[last];
       const s200 = sma200[last];
+      const lastRSI = rsi[last];
 
       let score = 0;
       let details = [];
 
-      // SMA
       if (s50 && s200) {
         if (s50 > s200) {
           score += 2;
-          details.push("SMA50 > SMA200 (alcista)");
+          details.push("SMA50 > SMA200 (tendencia alcista)");
         } else {
           score -= 2;
-          details.push("SMA50 < SMA200 (bajista)");
+          details.push("SMA50 < SMA200 (tendencia bajista)");
         }
       }
 
-      // RSI
       if (lastRSI < 30) {
         score += 1.5;
         details.push("RSI < 30 (sobrevendido)");
@@ -153,13 +153,12 @@
         details.push("RSI > 70 (sobrecomprado)");
       }
 
-      // Tendencia de cierre
-      if (close > prevClose) {
+      if (c > prev) {
         score += 0.5;
-        details.push("Cierre subiendo");
+        details.push("Precio cerrando al alza");
       } else {
         score -= 0.5;
-        details.push("Cierre bajando");
+        details.push("Precio cerrando a la baja");
       }
 
       let decision = "HOLD";
@@ -174,6 +173,45 @@
 
       result.className = cls;
       result.innerHTML = `<b>${decision}</b><br/><small>Puntaje: ${score.toFixed(2)}</small><br/><br/>${details.join("<br/>")}`;
+
+      // --- Chart ---
+      const labels = data.map((d) => d.Time || "");
+      const closePrices = data.map((d) => d.Close);
+      if (window.priceChart) window.priceChart.destroy();
+
+      window.priceChart = new Chart(chartCanvas, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Precio Close",
+              data: closePrices,
+              borderColor: "#38bdf8",
+              tension: 0.2,
+            },
+            {
+              label: "SMA50",
+              data: sma50,
+              borderColor: "#22c55e",
+              borderDash: [5, 5],
+            },
+            {
+              label: "SMA200",
+              data: sma200,
+              borderColor: "#f87171",
+              borderDash: [8, 5],
+            },
+          ],
+        },
+        options: {
+          plugins: { legend: { labels: { color: "#e2e8f0" } } },
+          scales: {
+            x: { ticks: { color: "#94a3b8" } },
+            y: { ticks: { color: "#94a3b8" } },
+          },
+        },
+      });
     }
   </script>
 </body>
