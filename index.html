@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Exness Signal Vision - Fast Mode</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Exness Trend Analyzer</title>
   <style>
     body {
       background-color: #0f172a;
@@ -16,7 +16,7 @@
       color: #38bdf8;
     }
     input[type="file"] {
-      margin-top: 15px;
+      margin: 15px 0;
     }
     button {
       background: #38bdf8;
@@ -26,7 +26,6 @@
       border-radius: 10px;
       font-weight: bold;
       cursor: pointer;
-      margin-top: 20px;
       transition: 0.2s;
     }
     button:hover {
@@ -54,18 +53,18 @@
   </style>
 </head>
 <body>
-  <h1>📈 Analizador Rápido Exness</h1>
-  <p>Subí una <b>imagen del gráfico</b> de Exness y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
+  <h1>📊 Analizador de Tendencia Exness</h1>
+  <p>Subí una <b>imagen del gráfico</b> de Exness y te diré si conviene <b>comprar</b> o <b>vender</b>.</p>
 
-  <input type="file" id="upload" accept="image/*">
-  <button onclick="analyzeFast()">⚡ Analizar Imagen</button>
+  <input type="file" id="upload" accept="image/*" />
+  <button onclick="analyzeTrend()">⚡ Analizar Imagen</button>
 
   <div id="result"></div>
-  <img id="preview" hidden>
+  <img id="preview" hidden />
   <canvas id="canvas"></canvas>
 
   <script>
-    async function analyzeFast() {
+    async function analyzeTrend() {
       const file = document.getElementById("upload").files[0];
       const result = document.getElementById("result");
       const preview = document.getElementById("preview");
@@ -73,7 +72,7 @@
       const ctx = canvas.getContext("2d");
 
       if (!file) {
-        result.innerHTML = "⚠️ Seleccioná una imagen del gráfico de Exness.";
+        result.innerHTML = "⚠️ Subí una captura del gráfico de Exness.";
         return;
       }
 
@@ -81,36 +80,53 @@
       reader.onload = function(e) {
         const img = new Image();
         img.onload = function() {
-          const w = 200, h = 100; // resolución pequeña = más rápido
+          const w = 250, h = 120;
           canvas.width = w;
           canvas.height = h;
           ctx.drawImage(img, 0, 0, w, h);
-          const data = ctx.getImageData(0, 0, w, h).data;
 
-          // Detectar dirección de tendencia (más brillante arriba o abajo)
-          let topBrightness = 0, bottomBrightness = 0;
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const data = imageData.data;
+
+          // Detectar color promedio por fila
+          const brightness = Array(h).fill(0);
           for (let y = 0; y < h; y++) {
-            let rowBrightness = 0;
+            let sum = 0;
             for (let x = 0; x < w; x++) {
               const i = (y * w + x) * 4;
-              const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
-              rowBrightness += brightness;
+              const r = data[i], g = data[i+1], b = data[i+2];
+              sum += (r + g + b) / 3;
             }
-            if (y < h / 2) topBrightness += rowBrightness;
-            else bottomBrightness += rowBrightness;
+            brightness[y] = sum / w;
           }
 
-          const diff = (bottomBrightness - topBrightness) / (w * h);
+          // Calcular tendencia (pendiente de brillo)
+          const mid = Math.floor(h / 2);
+          const topAvg = brightness.slice(0, mid).reduce((a,b)=>a+b)/mid;
+          const bottomAvg = brightness.slice(mid).reduce((a,b)=>a+b)/(h-mid);
+          const diff = bottomAvg - topAvg;
+
+          // Detectar líneas de tendencia básicas (diferencia entre extremos)
+          let leftSum = 0, rightSum = 0;
+          for (let y = 0; y < h; y++) {
+            const leftPixel = (y * w + 10) * 4;
+            const rightPixel = (y * w + (w-10)) * 4;
+            const leftBright = (data[leftPixel] + data[leftPixel+1] + data[leftPixel+2]) / 3;
+            const rightBright = (data[rightPixel] + data[rightPixel+1] + data[rightPixel+2]) / 3;
+            leftSum += leftBright;
+            rightSum += rightBright;
+          }
+          const lineDiff = rightSum - leftSum;
+
+          // Combinación de métricas
+          const trendScore = diff * 0.5 + lineDiff * 0.05;
+
           let decision = "HOLD", cls = "hold";
-
-          if (diff > 5) {
-            decision = "BUY"; cls = "buy";
-          } else if (diff < -5) {
-            decision = "SELL"; cls = "sell";
-          }
+          if (trendScore > 20) { decision = "BUY"; cls = "buy"; }
+          else if (trendScore < -20) { decision = "SELL"; cls = "sell"; }
 
           result.className = cls;
-          result.innerHTML = `<b>${decision}</b><br><small>Detección visual rápida (Δ=${diff.toFixed(2)})</small>`;
+          result.innerHTML = `<b>${decision}</b><br><small>Δ=${trendScore.toFixed(2)} (análisis visual rápido)</small>`;
 
           preview.src = e.target.result;
           preview.hidden = false;
