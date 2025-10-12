@@ -3,33 +3,36 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Exness — Analizador Visual Robustecido</title>
+<title>Exness — Confirmación 5s (Mejorada)</title>
 <style>
   body{background:#071126;color:#e6eef8;font-family:Inter,Arial;margin:0;padding:24px;text-align:center}
   h1{color:#61dafb;margin-bottom:4px}
   p.sub{color:#9fbfdc;margin-top:0;margin-bottom:12px}
   .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
   input[type=file]{background:#042033;border-radius:8px;color:#e6eef8;padding:8px}
+  label {color:#bcd7ee;}
   button{background:#09a3ff;border:none;color:#00242b;padding:10px 18px;border-radius:10px;font-weight:700;cursor:pointer}
-  #result{margin-top:10px;padding:12px;border-radius:10px;display:inline-block;min-width:300px;font-weight:700}
+  #result{margin-top:10px;padding:12px;border-radius:10px;display:inline-block;min-width:320px;font-weight:700}
   .buy{background:#16a34a;color:#04201a}
   .sell{background:#dc2626;color:white}
   .hold{background:#facc15;color:#04201a}
   #previewWrap{position:relative;display:inline-block;margin-top:14px;border-radius:10px;overflow:hidden;border:3px solid #0ea5e9}
-  #preview{display:block;max-width:92vw;width:380px;height:auto}
+  #preview{display:block;max-width:92vw;width:420px;height:auto}
   canvas#overlay{position:absolute;left:0;top:0;pointer-events:none}
   #meta{margin-top:10px;color:#9fbfdc;font-size:0.9rem}
   #timer{margin-top:8px;color:#9fbfdc;font-weight:700}
   small{display:block;color:#9fbfdc;margin-top:6px}
+  .note{color:#9fbfdc;font-size:0.9rem;margin-top:8px}
 </style>
 </head>
 <body>
-  <h1>Exness — Analizador Visual (robusto)</h1>
-  <p class="sub">Subí la captura del gráfico (1M). El analizador intentará extraer velas; si no puede, hará un fallback y siempre dará una señal con nivel de confianza.</p>
+  <h1>Exness — Confirmación 5s</h1>
+  <p class="sub">Subí captura (1M). El algoritmo detecta señales y, si querés, confirma con un segundo análisis de 5 segundos para aumentar la certeza.</p>
 
   <div class="controls">
     <input id="upload" type="file" accept="image/*" />
-    <button id="analyzeBtn">Analizar (≈2s)</button>
+    <button id="analyzeBtn">Analizar</button>
+    <label><input id="confirm5" type="checkbox" /> Confirmar en 5s</label>
   </div>
 
   <div id="result" class="hold">Esperando imagen...</div>
@@ -40,21 +43,32 @@
     <canvas id="overlay"></canvas>
   </div>
   <div id="timer"></div>
+  <div class="note">Nota: combinar dos análisis distintos ayuda a reducir falsos positivos visuales. No garantiza ganancias.</div>
 
 <script>
-/* Parámetros (puedes ajustar si quieres) */
-const PARAM = {
-  W: 360, H: 200,            // procesamiento (mayor -> más lento)
-  colStdThreshold: 10,      // std dev por columna para considerar "no fondo"
-  minDetectedColumns: 8,    // si detecta menos que esto, fallback
-  minCandles: 6,            // mínimo de velas para análisis serio
-  lookForwardMin: 3,        // usamos ventana corta para sugerir 3m
-  confidenceScale: 35,      // escala para convertir métricas a % confianza
-  simulateDelay: 1200      // ms: retardo intencional para 1-2s respuesta
+/* ======================
+   Parámetros (ajustables)
+   ======================*/
+const BASE_PARAM = {
+  W: 360, H: 200,
+  colStdThreshold: 10,
+  minDetectedColumns: 8,
+  minCandles: 6,
+  confidenceScale: 35,
+  simulateDelay: 500 // delay base (ms)
+};
+
+const CONFIRM_PARAM = {
+  W: 480, H: 280,             // mayor resolución para confirmación
+  colStdThreshold: 8,        // adaptamos umbral
+  minDetectedColumns: 10,
+  minCandles: 8,
+  simulateDelay: 500        // análisis de confirmación también rápido
 };
 
 const upload = document.getElementById('upload');
-const btn = document.getElementById('analyzeBtn');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const confirmCheckbox = document.getElementById('confirm5');
 const resultEl = document.getElementById('result');
 const metaEl = document.getElementById('meta');
 const previewWrap = document.getElementById('previewWrap');
@@ -62,120 +76,146 @@ const previewImg = document.getElementById('preview');
 const overlay = document.getElementById('overlay');
 const timerEl = document.getElementById('timer');
 
-btn.addEventListener('click', () => {
+analyzeBtn.addEventListener('click', async () => {
   if (!upload.files[0]) { showMsg('⚠️ Selecciona una imagen'); return; }
-  analyzeFile(upload.files[0]);
+  await analyzeWithOptionalConfirm(upload.files[0], confirmCheckbox.checked);
 });
 
-function showMsg(txt){
-  resultEl.className='hold'; resultEl.innerHTML = txt;
-  metaEl.innerHTML = ''; timerEl.innerHTML=''; previewWrap.hidden=true;
+function showMsg(msg){
+  resultEl.className='hold';
+  resultEl.innerHTML = msg;
+  metaEl.innerHTML = ''; timerEl.innerHTML = ''; previewWrap.hidden = true;
 }
 
-/* Lectura de archivo */
+/* util */
 function readFileAsDataURL(file){
-  return new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onload = () => res(fr.result);
-    fr.onerror = rej;
-    fr.readAsDataURL(file);
-  });
+  return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(file); });
 }
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
-/* Espera */
-function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-
-/* ANALIZAR archivo */
-async function analyzeFile(file){
-  resultEl.innerHTML = 'Analizando imagen...';
-  resultEl.className = '';
-  metaEl.innerHTML = ''; timerEl.innerHTML=''; previewWrap.hidden = true;
-
+/* MAIN: corre análisis y si pide confirmación, hace segundo análisis y combina */
+async function analyzeWithOptionalConfirm(file, doConfirm){
+  // carga y preview
   const dataUrl = await readFileAsDataURL(file);
   previewImg.src = dataUrl;
+  previewImg.onload = () => { previewWrap.hidden = false; overlay.width = previewImg.clientWidth; overlay.height = previewImg.clientHeight; };
 
-  // mostrarmos preview y adaptamos overlay
-  previewImg.onload = async () => {
-    previewWrap.hidden = false;
-    overlay.width = previewImg.clientWidth;
-    overlay.height = previewImg.clientHeight;
-  };
+  // primer análisis (rápido)
+  resultEl.innerHTML = 'Analizando (1/2)…';
+  resultEl.className = '';
+  metaEl.innerHTML = '';
+  timerEl.innerHTML = '';
+  await sleep(BASE_PARAM.simulateDelay);
+  const a1 = runSingleAnalysis(previewImg, BASE_PARAM);
 
-  // permitir que la imagen cargue en DOM
-  await sleep(80);
+  // if no series found, fallback still returns decision
+  // show provisional
+  resultEl.innerHTML = `Señal provisional: ${a1.decision} • Confianza ${(a1.confidence).toFixed(0)}% (analizando...)`;
+  drawArrow(a1.decision, a1.slope);
 
-  // retardo intencional para mejor UX y tiempo de cálculo ~1.2s
-  const tstart = performance.now();
-  await sleep(PARAM.simulateDelay);
-
-  // extraer serie robusta
-  const seriesObj = extractSeriesRobust(previewImg, PARAM.W, PARAM.H);
-  const tproc = performance.now();
-
-  if (!seriesObj || !seriesObj.series || seriesObj.series.length < PARAM.minCandles){
-    // fallback: brightness split + simple heuristic (siempre responde)
-    const fallback = fallbackDecision(previewImg);
-    displayResult(fallback.decision, fallback.confidence, fallback.explanation, seriesObj, tproc - tstart + 'ms');
+  if (!doConfirm){
+    // finalize now
+    finalizeDecision(a1, null);
     return;
   }
 
-  // Si hay serie, hacemos análisis técnico básico en la serie
-  const s = seriesObj.series;
+  // confirmación: esperar 5s (usuario pidió 5 segundos)
+  resultEl.innerHTML = `Confirmando en 5s… Señal provisional: ${a1.decision} • Confianza ${(a1.confidence).toFixed(0)}%`;
+  // show small countdown for 5 seconds
+  await countdownVisual(5);
+
+  // segundo análisis con parámetros de confirmación
+  resultEl.innerHTML = 'Analizando (2/2) de confirmación…';
+  await sleep(CONFIRM_PARAM.simulateDelay);
+  const a2 = runSingleAnalysis(previewImg, CONFIRM_PARAM);
+
+  // combinar resultados (ponderado)
+  const combined = combineAnalyses(a1, a2);
+  finalizeDecision(combined, {first: a1, second: a2});
+}
+
+/* cuenta regresiva visual de N segundos */
+async function countdownVisual(sec){
+  for (let s=sec; s>0; s--){
+    timerEl.innerHTML = `⏱ Confirmación en: ${s}s`;
+    await sleep(1000);
+  }
+  timerEl.innerHTML = '⏱ Ejecutando confirmación…';
+}
+
+/* Ejecuta un solo análisis: extracción + scoring.
+   Devuelve {decision, probUp(0..1), confidence(0..100), slope, seriesLen} */
+function runSingleAnalysis(img, PARAM){
+  // procesamiento y extracción robusta (inspirado en versiones anteriores)
+  const res = extractSeriesRobustParam(img, PARAM.W, PARAM.H, PARAM.colStdThreshold, PARAM.minDetectedColumns);
+  if (!res || !res.series || res.series.length < 3){
+    // fallback simple sobre brillo central
+    return fallbackSimple(img);
+  }
+  const s = res.series;
   const ind = computeIndicatorsSimple(s);
-  // metrics: slope, last returns average, volatility
-  const slope = ind.slope;
-  const recent = ind.recentReturn;
-  const vol = ind.volatility;
+  // scoring: combinación empírica simple
+  // slope positive => upward
+  let slopeScore = ind.slope * 50;
+  let momentumScore = ind.recentReturn * 200;
+  let volPenalty = -Math.min(15, ind.volatility * 200);
+  // color score (bull-bear)
+  const bullCount = (res.colors||[]).filter(c=>c==='bull').length;
+  const bearCount = (res.colors||[]).filter(c=>c==='bear').length;
+  const colorScore = (bullCount - bearCount) * 1.2;
 
-  // score components
-  // slope positive => upward; recentReturn positive => short-term momentum
-  const slopeScore = slope * 50; // escala empírica
-  const momentumScore = recent * 200;
-  const volPenalty = -Math.min(10, vol * 200);
-
-  // candle color heuristic: count blue-like vs red-like on seriesObj.colors
-  const colors = seriesObj.colors || [];
-  const bullCount = colors.filter(c=>'bull'===c).length;
-  const bearCount = colors.filter(c=>'bear'===c).length;
-  const colorScore = (bullCount - bearCount) * 1.5;
-
-  const rawScore = slopeScore + momentumScore + colorScore + volPenalty;
-
-  // convertir a probabilidad (sigmoid-like) y confianza
-  const probUp = 1 / (1 + Math.exp(-rawScore/20)); // 0..1
-  const confidence = Math.min(99, Math.max(5, Math.abs(rawScore) * PARAM.confidenceScale / 100 + 30));
+  const raw = slopeScore + momentumScore + colorScore + volPenalty;
+  const probUp = 1 / (1 + Math.exp(-raw/20)); // 0..1
+  const conf = Math.min(99, Math.max(10, Math.abs(raw) * PARAM.confidenceScale/100 + 35));
 
   let decision = 'HOLD';
   if (probUp > 0.62) decision = 'BUY';
   else if (probUp < 0.38) decision = 'SELL';
 
-  displayResult(decision, Math.round(confidence), `P:${(probUp*100).toFixed(1)}% • slope:${slope.toFixed(4)} • vol:${(vol*100).toFixed(3)}%`, seriesObj, Math.round(tproc - tstart) + 'ms');
+  return {decision, probUp, confidence: conf, slope: ind.slope, seriesLen: s.length, colors: res.colors||[]};
 }
 
-/* Mostrar resultado y dibujar flecha */
-function displayResult(decision, confidence, explanation, seriesObj, timing){
-  resultEl.className = decision==='BUY'?'buy':(decision==='SELL'?'sell':'hold');
-  resultEl.innerHTML = `<b>${decision}</b> — Confianza: ${confidence}%<br><small>${explanation}</small>`;
-  metaEl.innerHTML = `Detección: ${seriesObj ? seriesObj.series.length + ' puntos' : 'fallback'} • Tiempo aprox: ${timing}`;
-
-  // dibujar flecha
-  drawArrow(decision, seriesObj ? seriesObj.slope : 0);
-
-  // start suggested timer if BUY/SELL
-  if (decision === 'BUY' || decision === 'SELL'){
-    timerStart(3*60); // 3 minutos
-  } else { timerEl.innerHTML = ''; }
+/* Combina dos análisis: si coinciden se aumenta confianza; si difieren se calcula prob combinada por ponderación */
+function combineAnalyses(a1, a2){
+  if (!a2){ return a1; }
+  // Weights: give more weight to confirmation (slightly) because higher res
+  const w1 = 0.45, w2 = 0.55;
+  const combinedProb = (a1.probUp * w1 + a2.probUp * w2) / (w1 + w2);
+  let decision = 'HOLD';
+  if (combinedProb > 0.62) decision = 'BUY';
+  else if (combinedProb < 0.38) decision = 'SELL';
+  // confidence combination (if agree, boost)
+  let baseConf = (a1.confidence * w1 + a2.confidence * w2) / (w1 + w2);
+  if (a1.decision === a2.decision && a1.decision !== 'HOLD') baseConf = Math.min(99, baseConf + 12);
+  // final structure
+  return {
+    decision,
+    probUp: combinedProb,
+    confidence: Math.round(baseConf),
+    slope: (a1.slope + a2.slope)/2,
+    sources: {first: a1, second: a2}
+  };
 }
 
-/* Dibuja flecha sobre preview */
+/* Finalizar: mostrar y dibujar flecha */
+function finalizeDecision(finalObj, details){
+  drawArrow(finalObj.decision, finalObj.slope);
+  resultEl.className = finalObj.decision==='BUY'?'buy':(finalObj.decision==='SELL'?'sell':'hold');
+  resultEl.innerHTML = `<b>${finalObj.decision}</b><br>Prob subida (3m): ${(finalObj.probUp*100).toFixed(1)}%<br>Confianza: ${finalObj.confidence}%`;
+  metaEl.innerHTML = `Fuente1:${details && details.first?details.first.seriesLen+'pts':''} ${details? '•':''} Fuente2:${details && details.second?details.second.seriesLen+'pts':''}`;
+  // Si BUY o SELL, iniciar timer de 3 minutos (sugerido)
+  if (finalObj.decision === 'BUY' || finalObj.decision === 'SELL') timerStart(3*60);
+  else timerEl.innerHTML = '';
+}
+
+/* Dibuja flecha en overlay */
 function drawArrow(decision, slope){
-  const ov = overlay;
-  const ctx = ov.getContext('2d');
+  const ov = overlay; const ctx = ov.getContext('2d');
   ctx.clearRect(0,0,ov.width,ov.height);
-  if (!decision || decision === 'HOLD') return;
+  if (decision==='HOLD') return;
   ctx.save();
   ctx.translate(ov.width - 80, 60);
-  ctx.rotate(Math.max(-0.7, Math.min(0.7, slope * 1.8)));
+  ctx.rotate(Math.max(-0.8, Math.min(0.8, slope * 1.4)));
   ctx.fillStyle = decision === 'BUY' ? '#16a34a' : '#dc2626';
   ctx.beginPath();
   if (decision === 'BUY') { ctx.moveTo(-18,18); ctx.lineTo(0,-18); ctx.lineTo(18,18); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(0,28); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth=6; ctx.stroke(); }
@@ -183,48 +223,44 @@ function drawArrow(decision, slope){
   ctx.restore();
 }
 
-/* Timer simple */
+/* Timer */
 let timerId = null;
 function timerStart(seconds){
   if (timerId) clearInterval(timerId);
   const end = Date.now() + seconds*1000;
-  timerUpdate(); timerId = setInterval(timerUpdate, 300);
-  function timerUpdate(){
+  updateTimer(); timerId = setInterval(updateTimer, 300);
+  function updateTimer(){
     const rem = Math.max(0, Math.round((end - Date.now())/1000));
     const mm = Math.floor(rem/60), ss = rem%60;
-    timerEl.innerHTML = `⏱ Tiempo sugerido hasta revisión: ${mm}:${String(ss).padStart(2,'0')}`;
+    timerEl.innerHTML = `⏱ Revisar en: ${mm}:${String(ss).padStart(2,'0')}`;
     if (rem<=0){ clearInterval(timerId); timerId=null; timerEl.innerHTML = '⏱ Tiempo sugerido expirado'; }
   }
 }
 
-/* ----------------------------------------------------
-   Extracción robusta de serie desde la imagen
-   - escala a W x H
-   - calcula std dev por columna; columnas con std>thresh son "activas"
-   - agrupa columnas activas en velas; calcula midY por vela
-   - detecta color promedio por vela (bull/bear/neutral)
-   - devuelve series normalizadas 0..1 (left->right)
------------------------------------------------------*/
-function extractSeriesRobust(img, W, H){
+/* ---------------------------
+   FUNCIONES DE EXTRACCIÓN y FALLBACK (robustas)
+   version paramétrica para reusar con distintos tamaños/umbrales
+   ---------------------------*/
+function extractSeriesRobustParam(img, W, H, colStdThreshold, minDetectedColumns){
   const c = document.createElement('canvas'); c.width=W; c.height=H;
   const ctx = c.getContext('2d', {willReadFrequently:true});
-  // center-crop to preserve candle area
+  // center-crop
   const arSrc = img.naturalWidth / img.naturalHeight;
   const arDst = W / H;
   let sx=0, sy=0, sW=img.naturalWidth, sH=img.naturalHeight;
   if (arSrc > arDst){ sW = Math.round(img.naturalHeight * arDst); sx = Math.floor((img.naturalWidth - sW)/2); }
   else { sH = Math.round(img.naturalWidth / arDst); sy = Math.floor((img.naturalHeight - sH)/2); }
   ctx.drawImage(img, sx, sy, sW, sH, 0, 0, W, H);
+
   const im = ctx.getImageData(0,0,W,H); const data = im.data;
 
-  // per-column std dev and brightness
+  // per-column std dev and mean
   const cols = [];
   for (let x=0;x<W;x++){
     let sum=0,sum2=0,count=0;
     for (let y=0;y<H;y++){
       const i=(y*W + x)*4;
-      const r=data[i], g=data[i+1], b=data[i+2];
-      const bright = (r+g+b)/3;
+      const bright = (data[i]+data[i+1]+data[i+2])/3;
       sum += bright; sum2 += bright*bright; count++;
     }
     const mean = sum/count; const variance = Math.max(0, sum2/count - mean*mean);
@@ -232,39 +268,38 @@ function extractSeriesRobust(img, W, H){
     cols.push({x,mean,std});
   }
 
-  // decide columnas activas por std dev y mean not pure black
-  const active = cols.map(c=> (c.std > PARAM.colStdThreshold && c.mean > 6) );
-  const activeCount = active.filter(Boolean).length;
-
-  // if too few active columns, try alternative threshold (adaptive)
-  if (activeCount < PARAM.minDetectedColumns){
-    // lower threshold adaptive
+  // active columns by std
+  const active = cols.map(c=> c.std > colStdThreshold && c.mean > 6 );
+  let activeCount = active.filter(Boolean).length;
+  // adaptive: if too few, relax threshold
+  if (activeCount < minDetectedColumns){
     for (let i=0;i<cols.length;i++){
-      if (cols[i].std > Math.max(3, PARAM.colStdThreshold * 0.5)) active[i]=true;
+      if (cols[i].std > Math.max(2, colStdThreshold*0.5)) active[i] = true;
     }
+    activeCount = active.filter(Boolean).length;
   }
 
-  // group contiguous active columns into blocks (candles)
+  // group contiguous active columns -> candles
   const candles = [];
   let i=0;
-  while(i<W){
+  while (i<W){
     if (!active[i]) { i++; continue; }
     let j=i, sumMid=0,cnt=0, sumR=0,sumG=0,sumB=0;
-    while(j<W && active[j]){
-      // compute mid point per column by scanning top->bottom for non-background pixels
-      let top=null,bottom=null, rsum=0,gsum=0,bsum=0,cc=0;
+    while (j<W && active[j]){
+      // estimate mid by scanning column for brightest region
+      let top=null, bottom=null, rsum=0, gsum=0, bsum=0, ccount=0;
       for (let y=0;y<H;y++){
         const idx=(y*W + j)*4;
-        const r=data[idx], g=data[idx+1], b=data[idx+2];
-        const bright=(r+g+b)/3;
+        const r = data[idx], g = data[idx+1], b = data[idx+2];
+        const bright = (r+g+b)/3;
         if (bright > 8 || r>20 || b>20){
           if (top===null) top=y;
-          bottom=y;
-          rsum+=r; gsum+=g; bsum+=b; cc++;
+          bottom = y;
+          rsum += r; gsum += g; bsum += b; ccount++;
         }
       }
-      if (cc>0){
-        const mid = (top + bottom)/2;
+      if (ccount>0){
+        const mid=(top+bottom)/2;
         sumMid += mid; cnt++;
         sumR += rsum; sumG += gsum; sumB += bsum;
       }
@@ -272,10 +307,9 @@ function extractSeriesRobust(img, W, H){
     }
     if (cnt>0){
       const midY = sumMid / cnt;
-      const avgR = sumR / (cnt* ( (cnt>0)?1:1) );
-      const avgG = sumG / (cnt* ( (cnt>0)?1:1) );
-      const avgB = sumB / (cnt* ( (cnt>0)?1:1) );
-      // decide color
+      const avgR = sumR / (cnt);
+      const avgG = sumG / (cnt);
+      const avgB = sumB / (cnt);
       let color='neutral';
       if (avgB > avgR + 18) color='bull';
       else if (avgR > avgB + 18) color='bear';
@@ -284,39 +318,33 @@ function extractSeriesRobust(img, W, H){
     i=j;
   }
 
-  // if no candles, try column mid sampling fallback
   if (candles.length === 0) {
-    // fallback: sample vertical brightness profile and treat each column with variance as point
+    // fallback: sample column peaks
     const pts = [];
-    for (let x=0;x<W;x++){
-      if (cols[x].std > PARAM.colStdThreshold*0.6){
-        // approximate mid by highest brightness location
-        let bestY=0,bestVal=-1;
+    for (let x=0; x<W; x++){
+      if (cols[x].std > colStdThreshold*0.6){
+        let bestY=0, bestV=-1;
         for (let y=0;y<H;y++){
           const idx=(y*W + x)*4;
-          const r=data[idx], g=data[idx+1], b=data[idx+2];
-          const bright=(r+g+b)/3;
-          if (bright > bestVal){ bestVal=bright; bestY=y; }
+          const bright = (data[idx]+data[idx+1]+data[idx+2])/3;
+          if (bright > bestV){ bestV = bright; bestY = y; }
         }
-        pts.push({x,mid:bestY});
+        pts.push(bestY);
       }
     }
-    if (pts.length < PARAM.minCandles) return null;
-    // create series from pts mid positions
-    const mids = pts.map(p=>p.mid);
-    // normalize mids to 0..1 (inverted)
-    const minM = Math.min(...mids), maxM = Math.max(...mids);
-    const series = mids.map(m => 1 - (m - minM) / Math.max(1e-6, maxM - minM));
+    if (pts.length < minDetectedColumns) return null;
+    const minM = Math.min(...pts), maxM = Math.max(...pts);
+    const series = pts.map(m => 1 - (m - minM) / Math.max(1e-6, maxM - minM));
     return {series, slope:0, colors:[]};
   }
 
-  // build series of closes from candle midY (left->right)
-  const mids = candles.map(c=>c.midY);
+  // build normalized closes from mids
+  const mids = candles.map(c => c.midY);
   const minM = Math.min(...mids), maxM = Math.max(...mids);
   const series = mids.map(m => 1 - (m - minM) / Math.max(1e-6, maxM - minM));
-  const colors = candles.map(c=>c.color);
+  const colors = candles.map(c => c.color);
 
-  // slope estimation: regress series vs index
+  // slope by regression
   let sumX=0,sumY=0,sumXY=0,sumXX=0;
   for (let k=0;k<series.length;k++){ sumX+=k; sumY+=series[k]; sumXY+=k*series[k]; sumXX+=k*k; }
   const n = series.length;
@@ -325,43 +353,34 @@ function extractSeriesRobust(img, W, H){
   return {series, slope, colors};
 }
 
-/* ----------------------------------------------------
-  fallbackDecision: si no se detecta serie, igualmente
-  devolvemos una decisión basada en contraste/centro
------------------------------------------------------*/
-function fallbackDecision(img){
-  // sample center area brightness top vs bottom
+/* fallback minimal cuando no hay serie (analiza brillo central)
+   devuelve formato compatible con runSingleAnalysis */
+function fallbackSimple(img){
+  // small center sample
   const c = document.createElement('canvas'); c.width=120; c.height=120;
   const ctx = c.getContext('2d');
-  // draw center crop
-  const sx = Math.max(0, Math.floor((img.naturalWidth - img.naturalHeight)/2));
-  ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, 0, 120, 120);
-  const im = ctx.getImageData(0,0,120,120).data;
-  let topSum=0,bottomSum=0;
-  for (let y=0;y<120;y++){
-    for (let x=0;x<120;x++){
-      const i=(y*120 + x)*4;
-      const r=im[i], g=im[i+1], b=im[i+2];
-      const bright = (r+g+b)/3;
-      if (y < 60) topSum += bright; else bottomSum += bright;
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  const im = ctx.getImageData(0,0,c.width,c.height).data;
+  let topSum=0, botSum=0;
+  for (let y=0;y<c.height;y++){
+    for (let x=0;x<c.width;x++){
+      const i=(y*c.width+x)*4;
+      const bright=(im[i]+im[i+1]+im[i+2])/3;
+      if (y < c.height/2) topSum += bright; else botSum += bright;
     }
   }
-  const diff = (bottomSum - topSum)/(120*120);
-  // decide: if bottom much brighter -> BUY, if top brighter -> SELL
-  let decision='HOLD', confidence=30;
-  if (diff > 6) { decision='BUY'; confidence = Math.min(60, 30 + diff*3); }
-  else if (diff < -6) { decision='SELL'; confidence = Math.min(60, 30 + -diff*3); }
-  else { decision='HOLD'; confidence = Math.max(15, 40 - Math.abs(diff)*2); }
-  return {decision, confidence, explanation:`Fallback por baja detección (Δ=${diff.toFixed(2)})`};
+  const diff = (botSum - topSum)/(c.width*c.height);
+  let decision='HOLD', probUp=0.5, conf=30;
+  if (diff > 6){ decision='BUY'; probUp = 0.62 + Math.min(0.28, diff/50); conf = Math.min(70, 40 + diff*2); }
+  else if (diff < -6){ decision='SELL'; probUp = 0.38 - Math.min(0.28, -diff/50); conf = Math.min(70, 40 + -diff*2); }
+  return {decision, probUp, confidence:conf, slope:0, seriesLen:0, colors:[]};
 }
 
-/* ----------------------------------------------------
-  Indicadores básicos sobre series (returns, slope, volatility)
------------------------------------------------------*/
+/* indicadores simples sobre series */
 function computeIndicatorsSimple(series){
   const n = series.length;
   const rets = [];
-  for (let i=1;i<n;i++) rets.push((series[i] - series[i-1]) / Math.max(1e-9, Math.abs(series[i-1])));
+  for (let i=1;i<n;i++) rets.push((series[i]-series[i-1]) / Math.max(1e-9, Math.abs(series[i-1])));
   const meanR = rets.reduce((a,b)=>a+b,0)/Math.max(1, rets.length);
   let varR=0; rets.forEach(r=>varR += (r-meanR)*(r-meanR));
   const sd = Math.sqrt(varR / Math.max(1, rets.length));
