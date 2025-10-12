@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Analizador Visual de Señales Exness</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exness Signal Vision - Fast Mode</title>
   <style>
     body {
       background-color: #0f172a;
@@ -16,8 +15,8 @@
     h1 {
       color: #38bdf8;
     }
-    input {
-      margin-top: 20px;
+    input[type="file"] {
+      margin-top: 15px;
     }
     button {
       background: #38bdf8;
@@ -28,88 +27,95 @@
       font-weight: bold;
       cursor: pointer;
       margin-top: 20px;
+      transition: 0.2s;
     }
     button:hover {
       background: #0ea5e9;
+      transform: scale(1.05);
     }
     #result {
       font-size: 1.6em;
-      margin-top: 30px;
+      margin-top: 25px;
       padding: 20px;
       border-radius: 12px;
       display: inline-block;
+      min-width: 250px;
     }
-    .buy {
-      background-color: #16a34a;
-      color: white;
-    }
-    .sell {
-      background-color: #dc2626;
-      color: white;
-    }
-    .hold {
-      background-color: #facc15;
-      color: black;
-    }
+    .buy { background-color: #16a34a; color: white; }
+    .sell { background-color: #dc2626; color: white; }
+    .hold { background-color: #facc15; color: black; }
     img {
       margin-top: 25px;
       max-width: 90%;
       border-radius: 10px;
       border: 2px solid #38bdf8;
     }
+    canvas { display: none; }
   </style>
 </head>
 <body>
-  <h1>📈 Analizador Visual Exness</h1>
-  <p>Subí una <b>imagen del gráfico</b> y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
+  <h1>📈 Analizador Rápido Exness</h1>
+  <p>Subí una <b>imagen del gráfico</b> de Exness y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
 
-  <input type="file" id="upload" accept="image/*" />
-  <button onclick="analyzeImage()">🔍 Analizar Imagen</button>
+  <input type="file" id="upload" accept="image/*">
+  <button onclick="analyzeFast()">⚡ Analizar Imagen</button>
+
   <div id="result"></div>
-  <img id="preview" src="" alt="" hidden />
+  <img id="preview" hidden>
+  <canvas id="canvas"></canvas>
 
   <script>
-    async function analyzeImage() {
-      const fileInput = document.getElementById("upload");
-      const resultDiv = document.getElementById("result");
+    async function analyzeFast() {
+      const file = document.getElementById("upload").files[0];
+      const result = document.getElementById("result");
       const preview = document.getElementById("preview");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
 
-      const file = fileInput.files[0];
       if (!file) {
-        resultDiv.innerHTML = "⚠️ Seleccioná una imagen del gráfico.";
+        result.innerHTML = "⚠️ Seleccioná una imagen del gráfico de Exness.";
         return;
       }
 
       const reader = new FileReader();
-      reader.onload = async function (e) {
-        preview.src = e.target.result;
-        preview.hidden = false;
-        resultDiv.innerHTML = "Analizando imagen... ⏳";
-
-        // Convertir imagen en tensor (baja resolución para análisis)
+      reader.onload = function(e) {
         const img = new Image();
-        img.src = e.target.result;
-        img.onload = async () => {
-          const tensor = tf.browser.fromPixels(img).resizeNearestNeighbor([64, 64]).mean(2).expandDims(0).expandDims(-1).toFloat().div(255);
+        img.onload = function() {
+          const w = 200, h = 100; // resolución pequeña = más rápido
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+          const data = ctx.getImageData(0, 0, w, h).data;
 
-          // --- Simulación de análisis determinista (basado en contraste y dirección) ---
-          const mean = (await tensor.mean().data())[0];
-          const variance = (await tensor.var().data())[0];
-          const score = mean * 10 - variance * 5;
-
-          let decision = "HOLD";
-          let cls = "hold";
-          if (score > 1) {
-            decision = "BUY";
-            cls = "buy";
-          } else if (score < -1) {
-            decision = "SELL";
-            cls = "sell";
+          // Detectar dirección de tendencia (más brillante arriba o abajo)
+          let topBrightness = 0, bottomBrightness = 0;
+          for (let y = 0; y < h; y++) {
+            let rowBrightness = 0;
+            for (let x = 0; x < w; x++) {
+              const i = (y * w + x) * 4;
+              const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
+              rowBrightness += brightness;
+            }
+            if (y < h / 2) topBrightness += rowBrightness;
+            else bottomBrightness += rowBrightness;
           }
 
-          resultDiv.className = cls;
-          resultDiv.innerHTML = `<b>${decision}</b><br><small>Puntaje visual: ${score.toFixed(2)}</small>`;
+          const diff = (bottomBrightness - topBrightness) / (w * h);
+          let decision = "HOLD", cls = "hold";
+
+          if (diff > 5) {
+            decision = "BUY"; cls = "buy";
+          } else if (diff < -5) {
+            decision = "SELL"; cls = "sell";
+          }
+
+          result.className = cls;
+          result.innerHTML = `<b>${decision}</b><br><small>Detección visual rápida (Δ=${diff.toFixed(2)})</small>`;
+
+          preview.src = e.target.result;
+          preview.hidden = false;
         };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     }
