@@ -1,140 +1,205 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Exness Trend Analyzer</title>
-  <style>
-    body {
-      background-color: #0f172a;
-      color: #e2e8f0;
-      font-family: "Segoe UI", Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-    h1 {
-      color: #38bdf8;
-    }
-    input[type="file"] {
-      margin: 15px 0;
-    }
-    button {
-      background: #38bdf8;
-      border: none;
-      color: black;
-      padding: 10px 25px;
-      border-radius: 10px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: 0.2s;
-    }
-    button:hover {
-      background: #0ea5e9;
-      transform: scale(1.05);
-    }
-    #result {
-      font-size: 1.6em;
-      margin-top: 25px;
-      padding: 20px;
-      border-radius: 12px;
-      display: inline-block;
-      min-width: 250px;
-    }
-    .buy { background-color: #16a34a; color: white; }
-    .sell { background-color: #dc2626; color: white; }
-    .hold { background-color: #facc15; color: black; }
-    img {
-      margin-top: 25px;
-      max-width: 90%;
-      border-radius: 10px;
-      border: 2px solid #38bdf8;
-    }
-    canvas { display: none; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Exness Trend — Analizador Visual Mejorado</title>
+<style>
+  body{background:#071126;color:#e6eef8;font-family:Inter,Segoe UI,Arial;margin:0;padding:32px;text-align:center;}
+  h1{color:#61dafb;margin:0 0 8px}
+  p.sub{color:#bcd7ee;margin:0 0 18px}
+  .controls{margin:18px 0}
+  input[type=file]{padding:6px;background:#072033;border-radius:6px;color:#e6eef8}
+  button{background:#09a3ff;border:none;color:#00242b;padding:12px 24px;border-radius:12px;font-weight:700;cursor:pointer}
+  #result{margin-top:20px;padding:18px;border-radius:12px;display:inline-block;min-width:260px}
+  .buy{background:#16a34a;color:white}
+  .sell{background:#dc2626;color:white}
+  .hold{background:#facc15;color:#04201a}
+  #preview{margin-top:18px;max-width:90%;border-radius:8px;border:3px solid #0ea5e9}
+  small{display:block;color:#bcd7ee;margin-top:8px}
+  .meta{margin-top:12px;color:#9fbfdc}
+</style>
 </head>
 <body>
-  <h1>📊 Analizador de Tendencia Exness</h1>
-  <p>Subí una <b>imagen del gráfico</b> de Exness y te diré si conviene <b>comprar</b> o <b>vender</b>.</p>
+  <h1>Exness Trend — Analizador Visual</h1>
+  <p class="sub">Subí una captura del gráfico (1M recomendado). El sistema detecta velas, tendencia, breakout y te da una señal determinista.</p>
 
-  <input type="file" id="upload" accept="image/*" />
-  <button onclick="analyzeTrend()">⚡ Analizar Imagen</button>
+  <div class="controls">
+    <input id="upload" type="file" accept="image/*" />
+    <button onclick="analyze()">🔍 Analizar Imagen</button>
+  </div>
 
-  <div id="result"></div>
-  <img id="preview" hidden />
-  <canvas id="canvas"></canvas>
+  <div id="result" class="hold">Esperando imagen...</div>
+  <div class="meta" id="meta"></div>
+  <img id="preview" hidden alt="preview" />
+  <canvas id="c" style="display:none"></canvas>
 
-  <script>
-    async function analyzeTrend() {
-      const file = document.getElementById("upload").files[0];
-      const result = document.getElementById("result");
-      const preview = document.getElementById("preview");
-      const canvas = document.getElementById("canvas");
-      const ctx = canvas.getContext("2d");
+<script>
+/* --------------------------------------------------------------------------------
+   Algoritmo visual mejorado:
+   1) Escala la imagen a tamaño reducido (w x h)
+   2) Para cada columna x: detecta píxeles "no fondo" (bright) -> topY / bottomY
+   3) Agrupa columnas contiguas con presencia de "candle" para formar velas
+   4) Para cada vela: calcula midY (aprox price), y color dominante (blue/red)
+   5) Slope: regresión lineal de midY vs index -> pendiente
+   6) Breakout: compara última midY con mínimo/máximo previo
+   7) Score: combina pendiente + conteo velas consecutivas + breakout
+   8) Resultado determinista: BUY / SELL / HOLD + fuerza + tiempo sugerido
+   --------------------------------------------------------------------------------*/
 
-      if (!file) {
-        result.innerHTML = "⚠️ Subí una captura del gráfico de Exness.";
-        return;
+function analyze(){
+  const f = document.getElementById('upload').files[0];
+  const resultDiv = document.getElementById('result');
+  const metaDiv = document.getElementById('meta');
+  const preview = document.getElementById('preview');
+
+  if(!f){ resultDiv.className='hold'; resultDiv.innerHTML='⚠️ Primero seleccioná una imagen.'; metaDiv.innerHTML=''; return; }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => processImage(img);
+    img.src = reader.result;
+    preview.src = reader.result;
+    preview.hidden = false;
+  };
+  reader.readAsDataURL(f);
+}
+
+function processImage(img){
+  // parámetros
+  const w = 250; const h = 140; // resolución reducida: rápido y suficiente
+  const canvas = document.getElementById('c'); canvas.width=w; canvas.height=h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img,0,0,w,h);
+  const im = ctx.getImageData(0,0,w,h);
+  const data = im.data;
+
+  // detectar columnas con "candle" pixeles
+  const colInfo = []; // {has:boolean, top:int, bottom:int, avgR,avgG,avgB}
+  const bgThreshold = 18; // pixels con brillo menor se consideran fondo oscuro
+  for(let x=0;x<w;x++){
+    let top = null, bottom = null, sumR=0,sumG=0,sumB=0,count=0;
+    for(let y=0;y<h;y++){
+      const i = (y*w + x)*4;
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const bright = (r+g+b)/3;
+      // consideramos píxel de vela si es mucho más brillante que fondo o color distintivo
+      if(bright > bgThreshold || r>40 || b>40){
+        if(top===null) top = y;
+        bottom = y;
+        sumR += r; sumG += g; sumB += b; count++;
       }
-
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        const img = new Image();
-        img.onload = function() {
-          const w = 250, h = 120;
-          canvas.width = w;
-          canvas.height = h;
-          ctx.drawImage(img, 0, 0, w, h);
-
-          const imageData = ctx.getImageData(0, 0, w, h);
-          const data = imageData.data;
-
-          // Detectar color promedio por fila
-          const brightness = Array(h).fill(0);
-          for (let y = 0; y < h; y++) {
-            let sum = 0;
-            for (let x = 0; x < w; x++) {
-              const i = (y * w + x) * 4;
-              const r = data[i], g = data[i+1], b = data[i+2];
-              sum += (r + g + b) / 3;
-            }
-            brightness[y] = sum / w;
-          }
-
-          // Calcular tendencia (pendiente de brillo)
-          const mid = Math.floor(h / 2);
-          const topAvg = brightness.slice(0, mid).reduce((a,b)=>a+b)/mid;
-          const bottomAvg = brightness.slice(mid).reduce((a,b)=>a+b)/(h-mid);
-          const diff = bottomAvg - topAvg;
-
-          // Detectar líneas de tendencia básicas (diferencia entre extremos)
-          let leftSum = 0, rightSum = 0;
-          for (let y = 0; y < h; y++) {
-            const leftPixel = (y * w + 10) * 4;
-            const rightPixel = (y * w + (w-10)) * 4;
-            const leftBright = (data[leftPixel] + data[leftPixel+1] + data[leftPixel+2]) / 3;
-            const rightBright = (data[rightPixel] + data[rightPixel+1] + data[rightPixel+2]) / 3;
-            leftSum += leftBright;
-            rightSum += rightBright;
-          }
-          const lineDiff = rightSum - leftSum;
-
-          // Combinación de métricas
-          const trendScore = diff * 0.5 + lineDiff * 0.05;
-
-          let decision = "HOLD", cls = "hold";
-          if (trendScore > 20) { decision = "BUY"; cls = "buy"; }
-          else if (trendScore < -20) { decision = "SELL"; cls = "sell"; }
-
-          result.className = cls;
-          result.innerHTML = `<b>${decision}</b><br><small>Δ=${trendScore.toFixed(2)} (análisis visual rápido)</small>`;
-
-          preview.src = e.target.result;
-          preview.hidden = false;
-        };
-        img.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
     }
-  </script>
+    if(count>0){
+      colInfo.push({has:true, top:top, bottom:bottom, avgR:sumR/count, avgG:sumG/count, avgB:sumB/count});
+    } else {
+      colInfo.push({has:false});
+    }
+  }
+
+  // Agrupar columnas contiguas con has=true -> velas
+  const candles = []; // {start,end,midY,avgColor}
+  let i=0;
+  while(i<w){
+    if(!colInfo[i].has){ i++; continue; }
+    let j=i;
+    let sumMid=0, cnt=0, sumR=0,sumG=0,sumB=0;
+    while(j<w && colInfo[j].has){
+      const mid = (colInfo[j].top + colInfo[j].bottom)/2;
+      sumMid += mid; cnt++;
+      sumR += colInfo[j].avgR; sumG += colInfo[j].avgG; sumB += colInfo[j].avgB;
+      j++;
+    }
+    const midY = sumMid/cnt;
+    const avgR = sumR/cnt, avgG = sumG/cnt, avgB = sumB/cnt;
+    // decidir color: si avgB claramente mayor -> bullish; si avgR mayor -> bearish
+    let color = 'neutral';
+    if(avgB > avgR + 18) color = 'bull';
+    else if(avgR > avgB + 18) color = 'bear';
+    candles.push({start:i,end:j-1,midY:midY,avgR:avgR,avgG:avgG,avgB:avgB,color:color});
+    i = j;
+  }
+
+  if(candles.length < 3){
+    document.getElementById('result').className='hold';
+    document.getElementById('result').innerHTML = 'HOLD<br><small>No se detectaron suficientes velas en la imagen.</small>';
+    document.getElementById('meta').innerHTML = 'Asegurate de subir una captura con la zona de velas visible (sin recortar demasiado).';
+    return;
+  }
+
+  // construir array de midY (para regresión) e indices
+  const mids = candles.map((c, idx) => ({x: idx, y: c.midY}));
+  // regresión lineal simple (slope)
+  let sumX=0, sumY=0, sumXY=0, sumXX=0;
+  for(const p of mids){ sumX += p.x; sumY += p.y; sumXY += p.x*p.y; sumXX += p.x*p.x; }
+  const n = mids.length;
+  const slope = (n*sumXY - sumX*sumY) / (n*sumXX - sumX*sumX + 1e-9); // píxels por candle
+  // convertir slope en "pendiente de precio" (y coord crece hacia abajo => slope<0 => subida)
+  const slopeNormalized = -slope; // invertimos para que + => subida
+
+  // contar velas finales consecutivas del mismo color (miramos últimas 6 velas)
+  const look = 6;
+  let lastIndex = candles.length -1;
+  let consBull = 0, consBear = 0;
+  for(let k=lastIndex; k>=Math.max(0,lastIndex-look+1); k--){
+    if(candles[k].color === 'bull'){ consBull++; consBear=0; }
+    else if(candles[k].color === 'bear'){ consBear++; consBull=0; }
+    else { break; }
+  }
+
+  // breakout: comparar última midY con minima/máxima del 30% previo
+  const checkWindow = Math.max(3, Math.floor(candles.length * 0.3));
+  const prevSlice = candles.slice(0, candles.length - 1 - 1).slice(-checkWindow); // excluir última vela
+  let prevMin = Infinity, prevMax = -Infinity;
+  for(const c of prevSlice){ if(c.midY < prevMin) prevMin = c.midY; if(c.midY > prevMax) prevMax = c.midY; }
+  const lastMid = candles[candles.length-1].midY;
+  // recuerden coordenada: menor y = precio más alto
+  let breakoutUp = false, breakoutDown = false;
+  if(prevMin !== Infinity && lastMid < prevMin - 2) breakoutUp = true; // superó máximo visual previo (midY menor)
+  if(prevMax !== -Infinity && lastMid > prevMax + 2) breakoutDown = true;
+
+  // Score: combinar métricas
+  // slope score: escala slopeNormalized (pix) a rango
+  const slopeScore = slopeNormalized * 10; // factor empírico
+  const candleScore = (consBull >= 3 ? 2.0 : (consBull >=2 ? 1.0:0)) - (consBear >=3 ? 2.0 : (consBear>=2 ? 1.0:0));
+  const breakoutScore = breakoutUp ? 2.0 : (breakoutDown ? -2.0 : 0);
+  const rawScore = slopeScore + candleScore + breakoutScore;
+
+  // decidir
+  let decision = 'HOLD', cls='hold';
+  if(rawScore >= 2.0) { decision='BUY'; cls='buy'; }
+  else if(rawScore <= -2.0) { decision='SELL'; cls='sell'; }
+  else { decision='HOLD'; cls='hold'; }
+
+  // fuerza textual
+  const absScore = Math.abs(rawScore);
+  let force = 'Baja';
+  if(absScore > 4) force = 'Alta';
+  else if(absScore > 2) force = 'Media';
+
+  // sugerencia de tiempo en 1M
+  let suggestedMinutes = '2–5 min (scalp)';
+  if(force === 'Alta') suggestedMinutes = '4–8 min';
+  else if(force === 'Baja') suggestedMinutes = '1–3 min (muy corto)';
+
+  // mostrar info
+  const resEl = document.getElementById('result');
+  resEl.className = cls;
+  resEl.innerHTML = `<b>${decision}</b><br><small>Δvisual=${rawScore.toFixed(2)} • Fuerza: ${force}</small><br><small>Tiempo sugerido (1M): ${suggestedMinutes}</small>`;
+
+  // detalle meta (para debugging / transparencia)
+  const details = [
+    `Pendiente (norm): ${slopeNormalized.toFixed(3)}`,
+    `Velas finales: bull=${consBull}, bear=${consBear}`,
+    `BreakoutUp=${breakoutUp} BreakoutDown=${breakoutDown}`,
+    `Componentes: slopeScore=${slopeScore.toFixed(2)}, candleScore=${candleScore.toFixed(2)}, breakout=${breakoutScore.toFixed(2)}`
+  ];
+  document.getElementById('meta').innerHTML = details.join(' • ');
+}
+
+/* Nota: los umbrales (bgThreshold, diferencia de color, factor slope) son empíricos.
+   Si querés, puedo ajustar los umbrales según capturas reales tuyas para mejorar la precisión. */
+</script>
 </body>
 </html>
