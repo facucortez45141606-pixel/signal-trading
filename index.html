@@ -3,9 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Indicador de Señales IA - Facu</title>
-
-<!-- Estilos -->
+<title>Indicador de Señales - Facu</title>
 <style>
   body {
     background-color: #0e0e12;
@@ -30,31 +28,23 @@
     cursor: pointer;
   }
   #result {
-    font-size: 1.3em;
+    font-size: 1.4em;
     margin-top: 25px;
   }
-  small {
-    color: #9ca3af;
-  }
 </style>
-
-<!-- Librería de IA -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ml5/0.12.2/ml5.min.js"></script>
 </head>
-
 <body>
-  <h1>Indicador de Señales 🤖💹</h1>
-  <p>Subí una captura del gráfico (velas japonesas) y el sistema con IA analizará patrones visuales para decidir si conviene <b>comprar</b> o <b>vender</b>.</p>
+  <h1>Indicador de Señales 💹</h1>
+  <p>Subí una captura del gráfico y el sistema analizará los colores dominantes para decidir si conviene <b>comprar</b> o <b>vender</b>.</p>
 
   <input type="file" id="upload" accept="image/*" />
-  <button onclick="analyze()">Analizar con IA</button>
-  <div id="result">📊 Esperando análisis...</div>
+  <button onclick="analyze()">Analizar Señal</button>
+  <div id="result">📈 Esperando análisis...</div>
 
 <script>
 function analyze() {
   const file = document.getElementById('upload').files[0];
   const result = document.getElementById('result');
-
   if (!file) {
     result.innerHTML = "⚠️ Primero seleccioná una imagen.";
     return;
@@ -66,38 +56,37 @@ function analyze() {
   reader.onload = function(e) {
     img.src = e.target.result;
     img.onload = function() {
-      // Crear canvas
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       canvas.width = img.width;
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0, img.width, img.height);
 
-      // Convertir imagen a tensor (IA)
-      const model = ml5.imageClassifier('MobileNet', () => {
-        model.predict(canvas, (err, results) => {
-          if (err) {
-            result.innerHTML = "❌ Error en el análisis.";
-            return;
-          }
+      const data = ctx.getImageData(0, 0, img.width, img.height).data;
+      let greenPixels = 0;
+      let redPixels = 0;
 
-          const label = results[0].label.toLowerCase();
-          let decision = "";
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        if (g > r && g > b) greenPixels++;
+        if (r > g && r > b) redPixels++;
+      }
 
-          // Lógica simple basada en el contenido visual
-          if (label.includes("green") || label.includes("up") || label.includes("chart") || label.includes("bull")) {
-            decision = "🟢 Señal de COMPRA - Tendencia alcista detectada";
-          } else if (label.includes("red") || label.includes("down") || label.includes("bear")) {
-            decision = "🔴 Señal de VENTA - Tendencia bajista detectada";
-          } else {
-            decision = "⚪ Señal NEUTRA o indecisa";
-          }
+      let decision = "";
+      if (greenPixels > redPixels * 1.2) {
+        decision = "🟢 Señal de COMPRA - Tendencia alcista detectada";
+      } else if (redPixels > greenPixels * 1.2) {
+        decision = "🔴 Señal de VENTA - Tendencia bajista detectada";
+      } else {
+        decision = "⚪ Señal NEUTRA - Mercado lateral o indefinido";
+      }
 
-          result.innerHTML = `${decision}<br><small>(Análisis IA basado en reconocimiento visual ml5.js)</small>`;
-        });
-      });
+      result.innerHTML = decision + `<br><small>(Análisis basado en dominancia de color)</small>`;
     };
   };
+
   reader.readAsDataURL(file);
 }
 </script>
