@@ -1,153 +1,403 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Exness Analyzer - Señal Inteligente</title>
-  <style>
-    body {
-      background-color: #0b1224;
-      color: #e2e8f0;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-
-    h1 {
-      color: #38bdf8;
-    }
-
-    input[type="file"] {
-      margin: 20px 0;
-      padding: 10px;
-    }
-
-    button {
-      background-color: #3b82f6;
-      color: white;
-      border: none;
-      padding: 15px 25px;
-      border-radius: 10px;
-      font-size: 1.1em;
-      font-weight: bold;
-      cursor: pointer;
-      transition: 0.3s;
-    }
-
-    button:hover {
-      background-color: #2563eb;
-    }
-
-    #result {
-      margin-top: 30px;
-      font-size: 1.4em;
-      padding: 25px;
-      border-radius: 15px;
-      display: inline-block;
-      font-weight: bold;
-      min-width: 280px;
-    }
-
-    .buy {
-      background-color: #16a34a;
-      color: #fff;
-    }
-
-    .sell {
-      background-color: #dc2626;
-      color: #fff;
-    }
-
-    .hold {
-      background-color: #eab308;
-      color: #000;
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Exness Visual+Técnico — Estimador 3min</title>
+<style>
+  body{background:#071126;color:#e6eef8;font-family:Inter,Segoe UI,Arial;padding:28px;text-align:center}
+  h1{color:#61dafb;margin-bottom:6px}
+  p.sub{color:#9fbfdc;margin-top:0;margin-bottom:18px}
+  .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  input[type=file]{background:#042033;border-radius:8px;color:#e6eef8;padding:8px}
+  button{background:#09a3ff;border:none;color:#00242b;padding:10px 18px;border-radius:10px;font-weight:700;cursor:pointer}
+  #result{margin-top:18px;padding:16px;border-radius:12px;display:inline-block;min-width:300px}
+  .buy{background:#16a34a;color:#04201a}
+  .sell{background:#dc2626;color:white}
+  .hold{background:#facc15;color:#04201a}
+  #previewWrap{position:relative;display:inline-block;margin-top:18px;border-radius:10px;overflow:hidden;border:3px solid #0ea5e9}
+  #preview{display:block;max-width:92vw;width:360px;height:auto}
+  canvas#overlay{position:absolute;left:0;top:0;pointer-events:none}
+  #meta{margin-top:10px;color:#9fbfdc;font-size:0.9rem}
+  #timer{margin-top:8px;color:#9fbfdc;font-weight:700}
+  small{display:block;color:#9fbfdc;margin-top:8px}
+</style>
 </head>
 <body>
-  <h1>Analizador Visual Exness</h1>
-  <p>Subí una imagen del gráfico de Exness y el sistema te dirá si conviene <b>comprar</b> o <b>vender</b>.</p>
+  <h1>Exness — Estimador Visual + Técnico (3 min)</h1>
+  <p class="sub">Subí una captura del gráfico (1M recomendado). El sistema extrae una serie, calcula indicadores y estima la probabilidad empírica de movimiento en los próximos 3 minutos.</p>
 
-  <input type="file" id="upload" accept="image/*" />
-  <br />
-  <button onclick="analyze()">⚡ Analizar Imagen</button>
+  <div class="controls">
+    <input id="upload" type="file" accept="image/*" />
+    <button id="analyzeBtn">Analizar (≈2s)</button>
+  </div>
 
-  <div id="result"></div>
+  <div id="result" class="hold">Esperando imagen...</div>
+  <div id="meta"></div>
+  <div id="previewWrap" hidden>
+    <img id="preview" alt="preview"/>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="timer"></div>
 
-  <script>
-    async function analyze() {
-      const fileInput = document.getElementById("upload");
-      const resultDiv = document.getElementById("result");
+<script>
+/* ----------------------------
+  Parámetros rápidos (puedes ajustar)
+-----------------------------*/
+const PARAM = {
+  W: 300, H: 160,            // resolución de procesamiento (mayor = más datos pero más lento)
+  bgThreshold: 16,          // brillo mínimo para considerar píxel “no fondo”
+  colorDiff: 20,            // diferencia para decidir color de vela
+  minCandles: 10,           // mínimo de velas/columnas detectadas para hacer análisis serio
+  windowLen: 20,            // largo de ventana para buscar similitudes
+  lookForward: 3,           // pasos a futuro para estimar probabilidad (3 minutos)
+  knnK: 40,                 // número de ventanas históricas más similares a considerar
+  probBuy: 0.62,            // si prob_empírica > probBuy => BUY
+  probSell: 0.38,           // if prob < probSell => SELL
+  scaleSlope: 10            // factor para escalar pendiente a score
+};
 
-      if (!fileInput.files.length) {
-        resultDiv.innerHTML = "⚠️ Por favor selecciona una imagen del gráfico.";
-        resultDiv.className = "";
-        return;
+/* ----------------------------
+  UI handlers
+-----------------------------*/
+const upload = document.getElementById('upload');
+const btn = document.getElementById('analyzeBtn');
+const resultEl = document.getElementById('result');
+const metaEl = document.getElementById('meta');
+const previewWrap = document.getElementById('previewWrap');
+const previewImg = document.getElementById('preview');
+const overlay = document.getElementById('overlay');
+const timerEl = document.getElementById('timer');
+
+btn.addEventListener('click', () => {
+  if (!upload.files[0]) { showMsg('⚠️ Seleccioná una imagen'); return; }
+  analyzeFile(upload.files[0]);
+});
+
+function showMsg(txt){
+  resultEl.className='hold'; resultEl.innerHTML = txt;
+  metaEl.innerHTML=''; timerEl.innerHTML=''; previewWrap.hidden=true;
+}
+
+/* ----------------------------
+  Funciones principales
+-----------------------------*/
+async function analyzeFile(file){
+  resultEl.innerHTML = 'Analizando imagen...';
+  resultEl.className = '';
+  metaEl.innerHTML = '';
+  timerEl.innerHTML = '';
+  previewWrap.hidden = true;
+
+  // cargar imagen
+  const dataUrl = await readFileAsDataURL(file);
+  previewImg.src = dataUrl;
+  previewImg.onload = () => { previewWrap.hidden=false; overlay.width = previewImg.clientWidth; overlay.height = previewImg.clientHeight; };
+
+  // pequeña espera para UX y cálculo (simula análisis 2s)
+  const t0 = performance.now();
+  await sleep(200); // no bloquear la UI
+  // procesar imagen (extraer series)
+  const series = extractSeriesFromImage(previewImg, PARAM.W, PARAM.H);
+  const t1 = performance.now();
+  if (!series || series.length < PARAM.minCandles) {
+    showMsg('HOLD — No se detectaron suficientes puntos (subí una captura con más historia).');
+    metaEl.innerHTML = `Puntos detectados: ${series ? series.length : 0} (tiempo proceso ${(t1-t0).toFixed(0)}ms)`;
+    return;
+  }
+
+  // calcular indicadores sobre la serie reconstruida
+  const indicators = computeIndicators(series);
+  // realizar búsqueda de ventanas similares y estimar probabilidad empírica
+  const stats = estimateFutureProbabilities(series, indicators, PARAM.windowLen, PARAM.lookForward, PARAM.knnK);
+  // decisión lógica
+  const probUp = stats.probUp; // 0..1
+  const probDown = 1 - probUp;
+  const decision = (probUp >= PARAM.probBuy) ? 'BUY' : (probUp <= PARAM.probSell ? 'SELL' : 'HOLD');
+
+  // sugerir SL/TP en % basado en volatilidad reciente (std dev of returns)
+  const vol = stats.volatility; // sd of returns
+  const sl_pct = Math.max(0.15, vol * 100 * 0.8); // ejemplo: 0.15% floor
+  const tp_pct = Math.max(sl_pct * 1.6, vol * 100 * 1.5);
+
+  // Mostrar resultado
+  const score = (probUp - 0.5) * 2; // -1..+1
+  let cls = 'hold';
+  if (decision === 'BUY') cls='buy'; else if (decision==='SELL') cls='sell';
+  resultEl.className = cls;
+  resultEl.innerHTML = `<b>${decision}</b><br>
+    Probabilidad subida (3m): ${(probUp*100).toFixed(1)}%<br>
+    Probabilidad bajada (3m): ${(probDown*100).toFixed(1)}%<br>
+    <small>Confianza empírica basada en ${stats.matchesFound} ventanas históricas</small>`;
+
+  metaEl.innerHTML = `Puntos:${series.length} • Vol(returns): ${(vol*100).toFixed(3)}% • Tiempo proc ${(t1-t0).toFixed(0)}ms`;
+  drawOverlayArrow(decision, stats.slope);
+
+  // si BUY/SELL, lanzar timer de 3 minutos (sugerido) y mostrar SL/TP
+  if (decision === 'BUY' || decision === 'SELL') {
+    timerStart(3*60); // 3 minutos
+    metaEl.innerHTML += `<br>SL sugerido: ${sl_pct.toFixed(2)}% • TP sugerido: ${tp_pct.toFixed(2)}%`;
+  } else {
+    timerEl.innerHTML = '';
+  }
+}
+
+/* ----------------------------
+  UTIL: read file as dataURL
+-----------------------------*/
+function readFileAsDataURL(file){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+/* ----------------------------
+  EXTRAER SERIE desde imagen:
+  - reduce la imagen a W x H
+  - para cada columna x: detecta "pixels de vela" y calcula midY
+  - devuelve array de closes aproximados (normalizados, 0..1)
+-----------------------------*/
+function extractSeriesFromImage(img, W, H){
+  // canvas de procesamiento
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+
+  // center-crop para preservar zona de velas (mejor para capturas con margen)
+  const arSrc = img.naturalWidth / img.naturalHeight;
+  const arDst = W / H;
+  let sx=0, sy=0, sW=img.naturalWidth, sH=img.naturalHeight;
+  if (arSrc > arDst) { sW = Math.round(img.naturalHeight * arDst); sx = Math.floor((img.naturalWidth - sW)/2); }
+  else { sH = Math.round(img.naturalWidth / arDst); sy = Math.floor((img.naturalHeight - sH)/2); }
+  ctx.drawImage(img, sx, sy, sW, sH, 0, 0, W, H);
+
+  const im = ctx.getImageData(0,0,W,H);
+  const data = im.data;
+
+  // column analysis: para cada x, buscar top y bottom donde hay color/no fondo
+  const cols = [];
+  for (let x=0; x<W; x++){
+    let top=null, bottom=null, sumR=0,sumG=0,sumB=0,count=0;
+    for (let y=0; y<H; y++){
+      const i = (y*W + x)*4;
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const bright = (r+g+b)/3;
+      // consider pixel part of candle if bright above threshold or colored
+      if (bright > PARAM.bgThreshold || r>40 || b>40){
+        if (top===null) top = y;
+        bottom = y;
+        sumR += r; sumG += g; sumB += b; count++;
       }
-
-      resultDiv.innerHTML = "🔍 Analizando gráfico...";
-      resultDiv.className = "";
-
-      // Simula análisis real (espera 2 segundos)
-      await new Promise((r) => setTimeout(r, 2000));
-
-      const file = fileInput.files[0];
-      const reader = new FileReader();
-
-      reader.onload = function (event) {
-        const img = new Image();
-        img.src = event.target.result;
-
-        img.onload = function () {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-
-          const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-
-          let red = 0, blue = 0, green = 0;
-          const totalPixels = data.length / 4;
-
-          // Calcula color promedio (predominio de velas)
-          for (let i = 0; i < data.length; i += 4) {
-            red += data[i];
-            green += data[i + 1];
-            blue += data[i + 2];
-          }
-
-          const avgRed = red / totalPixels;
-          const avgBlue = blue / totalPixels;
-          const avgGreen = green / totalPixels;
-
-          // Cálculo de tendencia y confianza
-          let delta = Math.abs(avgBlue - avgRed).toFixed(2);
-          let confidence = Math.min(100, (delta * 3.8).toFixed(1)); // confianza visual
-          let signal;
-
-          if (avgBlue > avgRed + 12) {
-            signal = "BUY 🟢";
-            resultDiv.className = "buy";
-          } else if (avgRed > avgBlue + 12) {
-            signal = "SELL 🔴";
-            resultDiv.className = "sell";
-          } else {
-            signal = "HOLD ⚪";
-            resultDiv.className = "hold";
-            confidence = (100 - delta * 3).toFixed(1);
-          }
-
-          resultDiv.innerHTML = `
-            ${signal}<br>
-            Δ=${delta} | Confianza: ${confidence}%<br>
-            <small>(Análisis visual inteligente)</small>
-          `;
-        };
-      };
-
-      reader.readAsDataURL(file);
     }
-  </script>
+    if (count>0) cols.push({x,top,bottom,mid:(top+bottom)/2,avgR:sumR/count,avgG:sumG/count,avgB:sumB/count});
+    else cols.push({x,has:false});
+  }
+
+  // form "candles" agrupando columnas contiguas con has
+  const candles = [];
+  let i = 0;
+  while (i < W){
+    if (!cols[i] || cols[i].has===false) { i++; continue; }
+    let j = i, sumMid=0, cnt=0;
+    while (j<W && cols[j].has!==false){
+      sumMid += cols[j].mid; cnt++; j++;
+    }
+    const mid = sumMid/cnt;
+    // note: mid smaller => visually higher => price higher
+    candles.push({mid, start:i, end:j-1});
+    i = j;
+  }
+
+  if (candles.length < PARAM.minCandles) return null;
+
+  // Convertir mid (0..H) a precio normalizado 0..1 (1 = top of canvas)
+  const mids = candles.map(c => c.mid);
+  // queremos escala inversa: mid small => high price
+  const minM = Math.min(...mids), maxM = Math.max(...mids);
+  const closes = mids.map(m => {
+    // map m in [minM,maxM] to price in [0,1] inverted
+    return 1 - (m - minM) / (Math.max(1e-6, maxM - minM));
+  });
+
+  return closes; // array of floats roughly coherent along time (left->right)
+}
+
+/* ----------------------------
+  Indicadores simples
+  - returns: {rsi, slope, returns}
+-----------------------------*/
+function computeIndicators(series){
+  const n = series.length;
+  // returns
+  const rets = new Array(n).fill(0);
+  for (let i=1;i<n;i++) rets[i] = (series[i] - series[i-1]) / Math.max(1e-9, Math.abs(series[i-1]));
+  // simple RSI proxy over 14
+  const period = Math.min(14, Math.max(2, Math.floor(n/4)));
+  let gain=0, loss=0;
+  for (let i=1;i<=period;i++){
+    const d = rets[i] || 0;
+    if (d>0) gain += d; else loss += -d;
+  }
+  let avgGain = gain/period, avgLoss = loss/period;
+  const rsi = new Array(n).fill(null);
+  rsi[period] = 100 - (100 / (1 + (avgGain/(avgLoss||1e-9))));
+  for (let i=period+1;i<n;i++){
+    const d = rets[i];
+    const g = d>0?d:0, l = d<0?-d:0;
+    avgGain = (avgGain*(period-1) + g)/period;
+    avgLoss = (avgLoss*(period-1) + l)/period;
+    const rs = avgGain / Math.max(1e-9, avgLoss);
+    rsi[i] = 100 - (100/(1+rs));
+  }
+
+  // slope: linear regression of series vs index
+  let sumX=0,sumY=0,sumXY=0,sumXX=0;
+  for (let i=0;i<n;i++){ sumX += i; sumY += series[i]; sumXY += i*series[i]; sumXX += i*i; }
+  const slope = (n*sumXY - sumX*sumY) / (n*sumXX - sumX*sumX + 1e-12);
+
+  return {series, returns:rets, rsi, slope};
+}
+
+/* ----------------------------
+  Estimador empírico:
+  - para la ventana final Wlast (windowLen), crea feature vector
+  - recorre todas las ventanas históricas de length windowLen con forward lookForward
+  - calcula distancia euclidiana entre features (normalizados)
+  - toma knnK ventanas más similares y calcula proporción con return positivo en forward window
+  - devuelve probUp (0..1), slope, volatility (std of returns), matchesFound
+-----------------------------*/
+function estimateFutureProbabilities(series, indicators, windowLen, lookForward, knnK){
+  const s = series;
+  const n = s.length;
+  // build features per window: [slope_window, meanReturn, rsi_last, recentMomentum]
+  const features = [];
+  for (let start=0; start + windowLen + lookForward < n; start++){
+    const end = start + windowLen;
+    const window = s.slice(start, end);
+    // slope window:
+    let sumX=0,sumY=0,sumXY=0,sumXX=0;
+    for (let i=0;i<windowLen;i++){ sumX += i; sumY += window[i]; sumXY += i*window[i]; sumXX += i*i; }
+    const slopeW = (windowLen*sumXY - sumX*sumY) / (windowLen*sumXX - sumX*sumX + 1e-12);
+    // mean return
+    let mr=0;
+    for (let i=1;i<window.length;i++) mr += (window[i]-window[i-1]) / Math.max(1e-9, Math.abs(window[i-1]));
+    mr /= Math.max(1, windowLen-1);
+    // rsi proxy last: compute short rsi over last half
+    const half = Math.max(2, Math.floor(windowLen/2));
+    let g=0,l=0;
+    for (let i=windowLen-half+1;i<windowLen;i++){
+      const d = (window[i]-window[i-1]) / Math.max(1e-9, Math.abs(window[i-1]));
+      if (d>0) g += d; else l += -d;
+    }
+    const avgG = g/half, avgL = l/half;
+    const rsiProxy = 100 - (100/(1 + (avgG/(avgL||1e-9))));
+    // recent momentum: last change
+    const recentMomentum = (window[windowLen-1] - window[windowLen-2]) / Math.max(1e-9, Math.abs(window[windowLen-2]));
+    // forward return over lookForward steps
+    const futureEnd = end + lookForward;
+    const futureRet = (s[futureEnd] - s[end-1]) / Math.max(1e-9, Math.abs(s[end-1]));
+    features.push({start, slopeW, mr, rsiProxy, recentMomentum, futureRet});
+  }
+
+  if (features.length === 0) return {probUp:0.5, slope: indicators.slope, volatility:0, matchesFound:0};
+
+  // build feature vector for last window (target)
+  const lastStart = n - windowLen - lookForward;
+  const lastWindow = s.slice(lastStart, lastStart + windowLen);
+  // compute same features for target
+  let sumX=0,sumY=0,sumXY=0,sumXX=0;
+  for (let i=0;i<windowLen;i++){ sumX += i; sumY += lastWindow[i]; sumXY += i*lastWindow[i]; sumXX += i*i; }
+  const slopeT = (windowLen*sumXY - sumX*sumY) / (windowLen*sumXX - sumX*sumX + 1e-12);
+  let mrT=0;
+  for (let i=1;i<lastWindow.length;i++) mrT += (lastWindow[i]-lastWindow[i-1]) / Math.max(1e-9, Math.abs(lastWindow[i-1]));
+  mrT /= Math.max(1, windowLen-1);
+  const half = Math.max(2, Math.floor(windowLen/2));
+  let g=0,l=0;
+  for (let i=windowLen-half+1;i<windowLen;i++){
+    const d = (lastWindow[i]-lastWindow[i-1]) / Math.max(1e-9, Math.abs(lastWindow[i-1]));
+    if (d>0) g += d; else l += -d;
+  }
+  const rsiT = 100 - (100/(1 + ( (g/half) / ( (l/half)||1e-9) )));
+  const recentMomentumT = (lastWindow[lastWindow.length-1] - lastWindow[lastWindow.length-2]) / Math.max(1e-9, Math.abs(lastWindow[lastWindow.length-2]));
+
+  // normalize features across all historical windows
+  function getArray(name){ return features.map(f=>f[name]); }
+  const names = ['slopeW','mr','rsiProxy','recentMomentum'];
+  const stats = {};
+  names.forEach(nm => {
+    const a = getArray(nm);
+    const mn = Math.min(...a), mx = Math.max(...a);
+    stats[nm] = {mn,mx};
+  });
+
+  // distance function (euclidean) normalized
+  const dists = features.map(f => {
+    let dist2 = 0;
+    const vals = [
+      (f.slopeW - slopeT) / ( (stats.slopeW.mx - stats.slopeW.mn) || 1e-6 ),
+      (f.mr - mrT) / ( (stats.mr.mx - stats.mr.mn) || 1e-6 ),
+      (f.rsiProxy - rsiT) / ( (stats.rsiProxy.mx - stats.rsiProxy.mn) || 1e-6 ),
+      (f.recentMomentum - recentMomentumT) / ( (stats.recentMomentum.mx - stats.recentMomentum.mn) || 1e-6 )
+    ];
+    for (const v of vals) dist2 += v*v;
+    return {start:f.start, dist:Math.sqrt(dist2), futureRet:f.futureRet};
+  });
+
+  // sort by distance ascending and take knnK
+  dists.sort((a,b) => a.dist - b.dist);
+  const k = Math.min(PARAM.knnK, dists.length);
+  const neighbors = dists.slice(0,k);
+  // compute empirical probUp as proportion of neighbors with futureRet > 0
+  const positive = neighbors.filter(n=>n.futureRet > 0).length;
+  const probUp = positive / Math.max(1, neighbors.length);
+  // volatility: std dev of returns over series
+  const rets = [];
+  for (let i=1;i<s.length;i++) rets.push((s[i]-s[i-1]) / Math.max(1e-9, Math.abs(s[i-1])));
+  const meanR = rets.reduce((a,b)=>a+b,0)/Math.max(1, rets.length);
+  let varR=0; rets.forEach(r=>varR += (r-meanR)*(r-meanR));
+  const sd = Math.sqrt(varR / Math.max(1, rets.length));
+
+  return {probUp, slope: indicators.slope, volatility: sd, matchesFound: neighbors.length};
+}
+
+/* ----------------------------
+  Dibujar flecha sobre imagen (overlay canvas)
+-----------------------------*/
+function drawOverlayArrow(decision, slope){
+  const ov = overlay;
+  const ctx = ov.getContext('2d');
+  ctx.clearRect(0,0,ov.width,ov.height);
+  if (!decision || decision === 'HOLD') return;
+  ctx.save();
+  ctx.translate(ov.width - 80, 60);
+  ctx.rotate(Math.max(-0.8, Math.min(0.8, slope * 1.4)));
+  ctx.fillStyle = decision === 'BUY' ? '#16a34a' : '#dc2626';
+  ctx.beginPath();
+  if (decision === 'BUY') { ctx.moveTo(-18,18); ctx.lineTo(0,-18); ctx.lineTo(18,18); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(0,28); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth=6; ctx.stroke(); }
+  else { ctx.moveTo(-18,-18); ctx.lineTo(0,18); ctx.lineTo(18,-18); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(0,18); ctx.lineTo(0,-28); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth=6; ctx.stroke(); }
+  ctx.restore();
+}
+
+/* ----------------------------
+  Timer de cuenta regresiva (visual)
+-----------------------------*/
+let timerId = null;
+function timerStart(seconds){
+  if (timerId) { clearInterval(timerId); timerId=null; }
+  const end = Date.now() + seconds*1000;
+  timerUpdate();
+  timerId = setInterval(timerUpdate, 300);
+  function timerUpdate(){
+    const rem = Math.max(0, Math.round((end - Date.now())/1000));
+    const mm = Math.floor(rem/60), ss = rem%60;
+    timerEl.innerHTML = `⏱ Tiempo sugerido hasta revisión: ${mm}:${String(ss).padStart(2,'0')}`;
+    if (rem <= 0){ clearInterval(timerId); timerId=null; timerEl.innerHTML = '⏱ Tiempo sugerido expirado'; }
+  }
+}
+
+</script>
 </body>
 </html>
