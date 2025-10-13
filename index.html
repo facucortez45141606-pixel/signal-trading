@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Indicador Pro de Trading</title>
+<title>Indicador Visual + Mercado Pro</title>
 <style>
 body {
   font-family: Arial;
@@ -20,76 +20,105 @@ button {
   border-radius: 10px;
   margin: 10px;
 }
+img {
+  margin-top: 10px;
+  max-width: 90%;
+  border-radius: 10px;
+}
 .result {
-  font-size: 1.5em;
-  margin-top: 20px;
+  font-size: 1.3em;
+  margin-top: 15px;
 }
 </style>
 </head>
 <body>
-<h2>📈 Analizador de Señales de Trading</h2>
-<p>Selecciona una criptomoneda para analizar su tendencia actual.</p>
 
+<h2>📊 Analizador de Señales Combinado</h2>
+
+<p>1️⃣ Sube una captura del gráfico</p>
+<input type="file" id="upload" accept="image/*">
+<br>
+<img id="preview" src="">
+
+<p>2️⃣ Elige una criptomoneda para verificar datos reales:</p>
 <select id="symbol">
   <option value="BTCUSDT">Bitcoin (BTC/USDT)</option>
   <option value="ETHUSDT">Ethereum (ETH/USDT)</option>
   <option value="BNBUSDT">BNB (BNB/USDT)</option>
 </select>
-<br>
-<button onclick="analyze()">Analizar Mercado</button>
 
-<div class="result" id="result"></div>
+<br><button onclick="analyze()">Analizar Señales</button>
+
+<div id="result" class="result"></div>
 
 <script>
-async function analyze() {
-  const symbol = document.getElementById("symbol").value;
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`);
-  const data = await res.json();
-
-  // Convertimos a precios de cierre
-  const closes = data.map(c => parseFloat(c[4]));
-
-  // Calcular RSI (14 periodos)
-  function calcRSI(prices, period = 14) {
-    let gains = 0, losses = 0;
-    for (let i = 1; i <= period; i++) {
-      const diff = prices[i] - prices[i - 1];
-      if (diff >= 0) gains += diff;
-      else losses -= diff;
-    }
-    let avgGain = gains / period;
-    let avgLoss = losses / period;
-    for (let i = period + 1; i < prices.length; i++) {
-      const diff = prices[i] - prices[i - 1];
-      if (diff >= 0) {
-        avgGain = (avgGain * (period - 1) + diff) / period;
-        avgLoss = (avgLoss * (period - 1)) / period;
-      } else {
-        avgGain = (avgGain * (period - 1)) / period;
-        avgLoss = (avgLoss * (period - 1) - diff) / period;
-      }
-    }
-    const rs = avgGain / (avgLoss || 1);
-    return 100 - 100 / (1 + rs);
+const upload = document.getElementById("upload");
+const preview = document.getElementById("preview");
+upload.onchange = () => {
+  const file = upload.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = e => preview.src = e.target.result;
+    reader.readAsDataURL(file);
   }
+};
 
-  const rsi = calcRSI(closes);
+async function analyze() {
+  const result = document.getElementById("result");
+  const symbol = document.getElementById("symbol").value;
+
+  result.innerHTML = "Analizando imagen y mercado... ⏳";
+
+  // --- Análisis visual ---
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const img = document.getElementById("preview");
+  if (!img.src) return result.innerHTML = "⚠️ Sube una imagen antes de analizar.";
+
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+  let green = 0, red = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+    if (g > r && g > b) green++;
+    if (r > g && r > b) red++;
+  }
+  const visualSignal = green > red ? "ALCISTA" : red > green ? "BAJISTA" : "NEUTRA";
+
+  // --- Datos reales (Binance) ---
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`);
+  const dataMarket = await res.json();
+  const closes = dataMarket.map(c => parseFloat(c[4]));
+
   const smaShort = closes.slice(-7).reduce((a,b)=>a+b)/7;
   const smaLong = closes.slice(-25).reduce((a,b)=>a+b)/25;
+  const rsi = (() => {
+    let gains=0, losses=0;
+    for (let i=1;i<15;i++){
+      const diff=closes[i]-closes[i-1];
+      if(diff>=0) gains+=diff; else losses-=diff;
+    }
+    const rs=gains/(losses||1);
+    return 100-100/(1+rs);
+  })();
 
-  let signal = "";
-  if (rsi < 30 && smaShort > smaLong) signal = "🟢 COMPRA (sobreventa + cruce alcista)";
-  else if (rsi > 70 && smaShort < smaLong) signal = "🔴 VENTA (sobrecompra + cruce bajista)";
-  else signal = "⚪ NEUTRO (esperar confirmación)";
+  // --- Fusión de señales ---
+  let final = "⚪ NEUTRO";
+  if (visualSignal === "ALCISTA" && smaShort > smaLong && rsi < 70) final = "🟢 COMPRA (coinciden señales alcistas)";
+  else if (visualSignal === "BAJISTA" && smaShort < smaLong && rsi > 50) final = "🔴 VENTA (coinciden señales bajistas)";
 
-  document.getElementById("result").innerHTML = `
+  result.innerHTML = `
     <b>${symbol}</b><br>
-    RSI: ${rsi.toFixed(2)}<br>
-    SMA 7: ${smaShort.toFixed(2)}<br>
-    SMA 25: ${smaLong.toFixed(2)}<br>
-    <br><b>Resultado:</b> ${signal}
+    Señal visual: ${visualSignal}<br>
+    RSI: ${rsi.toFixed(1)}<br>
+    SMA7: ${smaShort.toFixed(1)} | SMA25: ${smaLong.toFixed(1)}<br><br>
+    <b>Resultado:</b> ${final}
   `;
 }
 </script>
+
 </body>
 </html>
