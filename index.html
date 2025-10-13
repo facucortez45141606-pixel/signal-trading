@@ -1,67 +1,201 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Indicador de Señales - Facu</title>
+  <meta charset="utf-8" />
+  <title>Señal desde captura (MVP)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body {
-      background: #0f172a;
-      color: #e2e8f0;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-    h1 {
-      color: #38bdf8;
-    }
-    .box {
-      background: #1e293b;
-      padding: 25px;
-      border-radius: 12px;
-      display: inline-block;
-      margin-top: 30px;
-    }
-    input[type=file] {
-      margin: 15px 0;
-    }
-    button {
-      background: #38bdf8;
-      border: none;
-      color: black;
-      padding: 10px 20px;
-      border-radius: 10px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    #result {
-      font-size: 1.4em;
-      margin-top: 25px;
-    }
+    body { font-family: Inter, Arial, sans-serif; max-width: 900px; margin: 20px auto; padding: 10px; }
+    h1 { margin-bottom: 6px; }
+    .box { padding: 12px; border-radius: 8px; background: #f6f7fb; margin-top: 12px; }
+    input[type=file] { margin-top: 8px; }
+    #preview { max-width: 100%; margin-top: 12px; border: 1px solid #ddd; }
+    pre { background:#222; color:#bfb; padding:10px; border-radius:6px; white-space:pre-wrap; }
   </style>
 </head>
 <body>
-  <h1>Indicador de Señales 📈</h1>
-  <p>Subí una captura del gráfico y el sistema te dirá si es momento de <b>comprar</b> o <b>vender</b>.</p>
+  <h1>Señal desde captura — MVP rápido (gratis)</h1>
+  <p>Subí una captura del gráfico (mejor: gráfico de línea o fondo claro/trazo oscuro) y en segundos te damos <strong>Compra / Venta / Neutro</strong>.</p>
+
   <div class="box">
-    <input type="file" id="upload" accept="image/*" />
-    <button onclick="analyze()">Analizar Señal</button>
-    <div id="result"></div>
+    <label>Seleccioná imagen (PNG/JPG):</label><br/>
+    <input id="file" type="file" accept="image/*" />
+    <canvas id="canvas" style="display:none;"></canvas>
+    <img id="preview" alt="" />
+    <div id="output"></div>
   </div>
 
-  <script>
-    function analyze() {
-      const file = document.getElementById('upload').files[0];
-      const result = document.getElementById('result');
-      if (!file) {
-        result.innerHTML = "⚠️ Primero seleccioná una imagen.";
-        return;
-      }
-      // Simulación de análisis (MVP)
-      const signals = ["✅ Señal de COMPRA", "❌ Señal de VENTA", "⚖️ Neutra"];
-      const pick = signals[Math.floor(Math.random() * signals.length)];
-      result.innerHTML = pick;
+<script>
+/* ----- Utilidades de indicadores (EMA y RSI) ----- */
+function ema(values, period) {
+  const k = 2 / (period + 1);
+  let emaArray = [];
+  let prev = values.slice(0, period).reduce((a,b)=>a+b,0) / period;
+  emaArray[period-1] = prev;
+  for (let i = period; i < values.length; i++) {
+    prev = values[i] * k + prev * (1 - k);
+    emaArray[i] = prev;
+  }
+  // compactar: devolver solo desde el primer calculado
+  return emaArray.slice(period-1);
+}
+function rsi(values, period = 14) {
+  if (values.length < period + 1) return [];
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = values[i] - values[i-1];
+    if (diff >= 0) gains += diff; else losses += Math.abs(diff);
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  const rsiArray = [];
+  let rs = avgGain / (avgLoss || 1e-9);
+  rsiArray[period] = 100 - (100 / (1 + rs));
+  for (let i = period + 1; i < values.length; i++) {
+    const diff = values[i] - values[i-1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    rs = avgGain / (avgLoss || 1e-9);
+    rsiArray[i] = 100 - (100 / (1 + rs));
+  }
+  // devolver compactado alineado al mismo índice del input
+  return rsiArray.slice(period);
+}
+
+/* ----- Extracción simple de la línea del gráfico desde imagen ----- */
+function extractPricesFromImage(imgElement) {
+  const canvas = document.getElementById('canvas');
+  const w = imgElement.naturalWidth;
+  const h = imgElement.naturalHeight;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgElement, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h).data;
+
+  const sampleCount = Math.min(250, w); // limitamos cantidad de puntos
+  const step = Math.max(1, Math.floor(w / sampleCount));
+  const prices = [];
+
+  for (let x = 0; x < w; x += step) {
+    let found = -1;
+    // buscamos desde arriba hacia abajo el primer pixel "no-blanco" o con alto contraste
+    for (let y = 0; y < h; y++) {
+      const idx = (y * w + x) * 4;
+      const r = imgData[idx], g = imgData[idx+1], b = imgData[idx+2];
+      // heurística simple: pixel oscuro (trazo) o color notorio
+      if ((r + g + b) < (255*3 - 80)) { found = y; break; }
     }
-  </script>
+    if (found === -1) found = h; // si no hay trazo, lo mandamos al fondo
+    prices.push(h - found); // invertimos: valores altos -> precios altos
+  }
+
+  // normalizar a escala numérica (para indicadores)
+  const mx = Math.max(...prices);
+  const mn = Math.min(...prices);
+  const normalized = prices.map(p => (p - mn) / (mx - mn + 1e-9) * 100);
+  return normalized;
+}
+
+/* ----- Lógica de señal (mismo criterio que te expliqué) ----- */
+function computeSignal(series) {
+  const out = { signal: 'Neutro', reasons: [], meta: {} };
+  if (!series || series.length < 30) { out.reasons.push('Serie muy corta para análisis'); return out; }
+
+  // Convertir a "close" array
+  const close = series.slice();
+
+  // EMA 9 y 21 (calculamos alineados para usar últimos valores)
+  const ema9full = ema(close, 9);
+  const ema21full = ema(close, 21);
+  if (ema9full.length < 2 || ema21full.length < 2) {
+    out.reasons.push('No hay suficientes datos para EMAs');
+    return out;
+  }
+
+  // Los arrays ema9full y ema21full están alineados al índice 8 y 20 respectivamente.
+  // Para simplicidad, tomamos los dos últimos valores disponibles (últimos calculados).
+  const lastEma9 = ema9full[ema9full.length - 1];
+  const prevEma9 = ema9full[ema9full.length - 2] || lastEma9;
+  const lastEma21 = ema21full[ema21full.length - 1];
+  const prevEma21 = ema21full[ema21full.length - 2] || lastEma21;
+
+  // RSI(14)
+  const rsival = rsi(close, 14);
+  const lastRsi = rsival.length ? rsival[rsival.length - 1] : null;
+
+  out.meta = { lastEma9, lastEma21, prevEma9, prevEma21, lastRsi };
+
+  // Reglas:
+  if (prevEma9 <= prevEma21 && lastEma9 > lastEma21 && lastRsi !== null && lastRsi > 45) {
+    out.signal = 'Compra';
+    out.reasons.push('EMA9 cruzó por encima de EMA21 y RSI > 45');
+  } else if (prevEma9 >= prevEma21 && lastEma9 < lastEma21 && lastRsi !== null && lastRsi < 55) {
+    out.signal = 'Venta';
+    out.reasons.push('EMA9 cruzó por debajo de EMA21 y RSI < 55');
+  } else {
+    out.signal = 'Neutro';
+    out.reasons.push('No hay cruce claro o RSI contradictorio');
+  }
+
+  return out;
+}
+
+/* ----- UI handlers ----- */
+const fileInput = document.getElementById('file');
+const preview = document.getElementById('preview');
+const output = document.getElementById('output');
+
+fileInput.addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  preview.src = url;
+  preview.onload = () => {
+    // pequeño delay para asegurar que la imagen está lista
+    setTimeout(() => {
+      try {
+        const series = extractPricesFromImage(preview);
+        const analysis = computeSignal(series);
+        renderResult(analysis, series);
+      } catch (err) {
+        output.innerHTML = '<p style="color:darkred">Error procesando la imagen: ' + err.message + '</p>';
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }, 150);
+  };
+});
+
+function renderResult(analysis, series) {
+  const s = analysis.signal;
+  const color = s === 'Compra' ? 'green' : s === 'Venta' ? 'red' : 'gray';
+  const meta = analysis.meta;
+  output.innerHTML = `
+    <div style="margin-top:12px;">
+      <h2 style="margin:0">${s} <small style="color:${color}; font-weight:700">●</small></h2>
+      <p><strong>Razones:</strong></p>
+      <ul>${analysis.reasons.map(r => `<li>${r}</li>`).join('')}</ul>
+      <p><strong>Detalles técnicos (valores relativos):</strong></p>
+      <pre>EMA9: ${meta.lastEma9 ? meta.lastEma9.toFixed(3) : 'n/a'}  
+EMA21: ${meta.lastEma21 ? meta.lastEma21.toFixed(3) : 'n/a'}  
+RSI: ${meta.lastRsi ? meta.lastRsi.toFixed(2) : 'n/a'}</pre>
+      <p>Longitud de la serie aproximada: ${series.length}</p>
+      <button id="downloadJson">Descargar reporte (.json)</button>
+    </div>
+  `;
+
+  document.getElementById('downloadJson').addEventListener('click', () => {
+    const data = { signal: analysis.signal, reasons: analysis.reasons, meta: analysis.meta, seriesLength: series.length };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'signal-report.json';
+    a.click();
+  });
+}
+</script>
 </body>
 </html>
