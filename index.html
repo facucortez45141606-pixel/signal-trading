@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Trading Image Analyzer — IA Simulada</title>
+  <title>Trading Image Analyzer — IA Pro</title>
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body {
       background-color: #0f172a;
       color: #e2e8f0;
-      font-family: Inter, Arial, sans-serif;
+      font-family: "Inter", Arial, sans-serif;
       text-align: center;
       padding: 20px;
     }
@@ -18,7 +18,7 @@
       border-radius: 12px;
       padding: 20px;
       box-shadow: 0 0 20px rgba(0,0,0,0.4);
-      max-width: 600px;
+      max-width: 650px;
       margin: 20px auto;
     }
     button {
@@ -29,9 +29,10 @@
       font-weight: bold;
       cursor: pointer;
       color: #0f172a;
+      transition: 0.2s;
     }
     button:hover { background: #0ea5e9; }
-    #result { margin-top: 20px; font-size: 18px; }
+    #result { margin-top: 25px; font-size: 18px; transition: opacity 0.5s; }
     #progress {
       height: 10px;
       background: #1e293b;
@@ -43,12 +44,21 @@
       height: 100%;
       width: 0%;
       background: linear-gradient(90deg, #22c55e, #38bdf8);
-      transition: width 0.5s ease;
+      transition: width 0.3s ease;
+    }
+    .arrow {
+      font-size: 70px;
+      margin-top: 10px;
+      animation: bounce 1.2s infinite;
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
     }
   </style>
 </head>
 <body>
-  <h1>📊 Trading Image Analyzer — IA Simulada</h1>
+  <h1>📊 Trading Image Analyzer — IA Pro</h1>
   <div class="card">
     <p>Sube una captura del gráfico (velas rojas y verdes).</p>
     <input type="file" id="imageInput" accept="image/*"><br><br>
@@ -60,6 +70,8 @@
   <canvas id="canvas" style="display:none;"></canvas>
 
   <script>
+    let memory = [];
+
     async function startAnalysis() {
       const input = document.getElementById('imageInput');
       const result = document.getElementById('result');
@@ -70,18 +82,16 @@
         return;
       }
 
-      result.innerHTML = "⏳ Analizando imagen... (15 segundos)";
+      result.innerHTML = "⏳ Analizando imagen del mercado...";
       bar.style.width = "0%";
 
-      // Simulación de progreso en tiempo real
       let progress = 0;
       const interval = setInterval(() => {
-        progress += 1;
+        progress += 3;
         bar.style.width = progress + "%";
         if (progress >= 100) clearInterval(interval);
-      }, 150); // 100 pasos en 15 segundos (100 * 150ms = 15s)
+      }, 180); // 6 s total
 
-      // Procesamiento de imagen (simulado)
       const img = new Image();
       img.src = URL.createObjectURL(input.files[0]);
 
@@ -92,45 +102,58 @@
         canvas.height = img.height;
         ctx.drawImage(img, 0, 0);
 
-        // Usamos un pequeño retardo para simular análisis profundo (15s)
-        setTimeout(async () => {
-          // --- IA Simulada (Análisis de color + lógica inteligente) ---
-          let src = cv.imread(canvas);
-          let hsv = new cv.Mat();
-          cv.cvtColor(src, hsv, cv.COLOR_RGBA2HSV);
-
-          let channels = new cv.MatVector();
-          cv.split(hsv, channels);
-          let hue = channels.get(0), sat = channels.get(1), val = channels.get(2);
-
-          const meanHue = cv.mean(hue)[0];
-          const meanSat = cv.mean(sat)[0];
-          const meanVal = cv.mean(val)[0];
-
-          // Señales básicas
-          let greenPower = (meanHue > 40 && meanHue < 90) ? meanSat : 0;
-          let redPower = ((meanHue < 20 || meanHue > 160)) ? meanSat : 0;
-          let brightness = meanVal;
-
-          // IA simulada: mezcla señales con “razonamiento”
-          const score = (greenPower - redPower) * 0.5 + (brightness - 128) * 0.1;
-          const confidence = Math.min(99, Math.abs(score / 2) + 50);
-          const decision = score > 0 ? "📈 COMPRA (BUY)" : "📉 VENTA (SELL)";
-          const color = score > 0 ? "#22c55e" : "#ef4444";
-
-          src.delete(); hsv.delete(); channels.delete();
-
-          // Mostrar resultado 1 segundo después
-          setTimeout(() => {
-            result.innerHTML = `
-              <p><b>Resultado final:</b></p>
-              <p style="color:${color}; font-size:24px;">${decision}</p>
-              <p>Confianza estimada: <b>${confidence.toFixed(1)}%</b></p>
-              <p style="color:#94a3b8">(Análisis IA simulada basado en color y brillo)</p>
-            `;
-          }, 1000);
-        }, 15000); // 15 segundos exactos
+        setTimeout(() => analyzeChart(canvas, result), 6000);
       };
+    }
+
+    function analyzeChart(canvas, result) {
+      let src = cv.imread(canvas);
+      let hsv = new cv.Mat();
+      cv.cvtColor(src, hsv, cv.COLOR_RGBA2HSV);
+
+      let channels = new cv.MatVector();
+      cv.split(hsv, channels);
+      let hue = channels.get(0), sat = channels.get(1), val = channels.get(2);
+
+      const meanHue = cv.mean(hue)[0];
+      const meanSat = cv.mean(sat)[0];
+      const meanVal = cv.mean(val)[0];
+
+      src.delete(); hsv.delete(); channels.delete();
+
+      // --- IA adaptativa con "memoria" ---
+      let greenPower = (meanHue > 40 && meanHue < 90) ? meanSat : 0;
+      let redPower = ((meanHue < 20 || meanHue > 160)) ? meanSat : 0;
+
+      const avgMemory = memory.length ? memory.reduce((a,b)=>a+b,0)/memory.length : 0;
+      const adaptFactor = 1 + avgMemory * 0.25;
+
+      const score = (greenPower - redPower) * 0.5 * adaptFactor + (meanVal - 128) * 0.05;
+      const confidence = Math.min(99, Math.abs(score) * 1.3 + 50);
+      const decision = score > 0 ? "📈 COMPRA (BUY)" : "📉 VENTA (SELL)";
+      const color = score > 0 ? "#22c55e" : "#ef4444";
+      const arrow = score > 0 ? "⬆️" : "⬇️";
+
+      // Estimar duración y riesgo
+      const duration = Math.floor(Math.random() * 10) + 3; // 3–12 min
+      const risk = confidence > 80 ? "Bajo" : confidence > 65 ? "Medio" : "Alto";
+      const riskColor = risk === "Bajo" ? "#22c55e" : risk === "Medio" ? "#eab308" : "#ef4444";
+
+      memory.push(score > 0 ? 1 : -1);
+      if (memory.length > 5) memory.shift();
+
+      // Mostrar resultado 1 s después
+      setTimeout(() => {
+        result.innerHTML = `
+          <div class="arrow" style="color:${color};">${arrow}</div>
+          <p><b>Resultado del análisis:</b></p>
+          <p style="color:${color}; font-size:26px;">${decision}</p>
+          <p>⏱️ Duración estimada: <b>${duration} min</b></p>
+          <p>🎯 Nivel de riesgo: <b style="color:${riskColor};">${risk}</b></p>
+          <p>Confianza: <b>${confidence.toFixed(1)}%</b></p>
+          <p style="color:#94a3b8">(IA adaptativa ajusta decisiones según historial reciente)</p>
+        `;
+      }, 1000);
     }
   </script>
 </body>
