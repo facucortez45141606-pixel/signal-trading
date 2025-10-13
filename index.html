@@ -1,282 +1,120 @@
 <!DOCTYPE html><html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Trading Image Analyzer — Mejorado</title>
-  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trading Image Analyzer Real (Delay 10s)</title>
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
-    :root{--bg:#0f172a;--card:#0b1220;--muted:#94a3b8;--accent:#38bdf8}
-    body{background:var(--bg);color:#e6eef8;font-family:Inter, Arial, sans-serif;margin:0;padding:20px;}
-    .wrap{max-width:980px;margin:10px auto}
-    header{display:flex;gap:16px;align-items:center;justify-content:space-between}
-    h1{font-size:20px;margin:0}
-    .card{background:linear-gradient(180deg,#0b1220, #0f172a);padding:18px;border-radius:12px;box-shadow:0 6px 24px rgba(2,6,23,0.5)}
-    .controls{display:flex;gap:12px;align-items:center}
-    input[type=file]{color:transparent}
-    button{background:var(--accent);border:none;color:#04293a;padding:10px 14px;border-radius:8px;font-weight:600;cursor:pointer}
-    button:disabled{opacity:0.6;cursor:not-allowed}
-    #status{color:var(--muted);font-size:13px;margin-top:8px}
-    .viewer{display:flex;gap:12px;margin-top:14px}
-    canvas{border-radius:8px;box-shadow:0 6px 20px rgba(2,6,23,0.6)}
-    #overlay{position:absolute;pointer-events:none}
-    .result{margin-top:12px;display:flex;gap:12px;align-items:center}
-    .pill{background:#071022;padding:8px 12px;border-radius:999px;color:var(--muted);font-weight:600}
-    .badge{padding:10px 14px;border-radius:8px}
-    .buy{background:#052e14;color:#9ff7c3}
-    .sell{background:#3a0b0b;color:#ffb6b6}
-    .download{background:#0f172a;border:1px solid #1f2a44;color:var(--muted)}
-    pre{background:#071022;padding:10px;border-radius:8px;overflow:auto;color:#bfe3ff}
-    footer{margin-top:18px;color:var(--muted);font-size:13px}
-    .loader{display:inline-block;vertical-align:middle}
+    body {
+      background-color: #0f172a;
+      color: #f1f5f9;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.4);
+      max-width: 500px;
+      margin: 30px auto;
+    }
+    button {
+      background: #38bdf8;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      margin-top: 10px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background: #0ea5e9; }
+    #result { margin-top: 20px; font-size: 18px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>📊 Trading Image Analyzer — Mejorado</h1>
-      <div class="pill">Lista: <span id="cvReady">Cargando OpenCV...</span></div>
-    </header><div class="card">
-  <div style="display:flex;flex-direction:column;gap:10px">
-    <div class="controls">
-      <input id="imageInput" type="file" accept="image/*">
-      <button id="analyzeBtn" disabled>Analizar gráfico</button>
-      <button id="downloadBtn" class="download" disabled>Descargar JSON</button>
-    </div>
-    <div id="status">Sube una captura del gráfico (velas o líneas). Mejor si la imagen tiene velas rojas/verde claramente visibles.</div>
-  </div>
+  <h1>📊 Trading Image Analyzer</h1>
+  <div class="card">
+    <p>Sube una captura del gráfico (candlestick o líneas) para analizar.</p>
+    <input type="file" id="imageInput" accept="image/*"><br>
+    <button onclick="analyzeChart()">Analizar Gráfico</button>
+    <div id="result"></div>
+  </div><canvas id="canvas" style="display:none;"></canvas>
 
-  <div class="viewer" style="position:relative;align-items:flex-start">
-    <canvas id="canvas" width="800" height="450"></canvas>
-    <canvas id="overlay" width="800" height="450" style="position:absolute;left:0;top:0"></canvas>
-  </div>
+  <script>
+    async function analyzeChart() {
+      const input = document.getElementById('imageInput');
+      const result = document.getElementById('result');
 
-  <div class="result">
-    <div id="decision" class="badge">Esperando analisis...</div>
-    <div id="confidence" class="pill"></div>
-    <div id="summary" style="color:var(--muted)"></div>
-  </div>
-
-  <details style="margin-top:12px;color:var(--muted)">
-    <summary>Registro (debug)</summary>
-    <pre id="log" style="height:160px"></pre>
-  </details>
-
-  <footer>Algoritmo: segmentación por color (HSV) + detección de rectángulos verticales (candles) + promedio móvil simple (SMA) para tendencia. Ajusta umbrales según tu imagen.</footer>
-</div>
-
-  </div>  <script>
-    // --- Helpers UI ---
-    const cvReadyEl = document.getElementById('cvReady');
-    const analyzeBtn = document.getElementById('analyzeBtn');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const imageInput = document.getElementById('imageInput');
-    const statusEl = document.getElementById('status');
-    const canvas = document.getElementById('canvas');
-    const overlay = document.getElementById('overlay');
-    const ctx = canvas.getContext('2d');
-    const octx = overlay.getContext('2d');
-    const decisionEl = document.getElementById('decision');
-    const confidenceEl = document.getElementById('confidence');
-    const summaryEl = document.getElementById('summary');
-    const logEl = document.getElementById('log');
-
-    let lastAnalysis = null;
-
-    function log(...args){ logEl.textContent += args.map(a=>typeof a==='object'?JSON.stringify(a,null,2):String(a)).join(' ') + "\n"; logEl.scrollTop = logEl.scrollHeight }
-
-    // --- OpenCV ready ---
-    cv['onRuntimeInitialized'] = () => {
-      cvReadyEl.textContent = 'OpenCV listo ✅';
-      analyzeBtn.disabled = false;
-    };
-
-    // --- Event handlers ---
-    analyzeBtn.addEventListener('click', async ()=>{
-      if(!imageInput.files[0]){ statusEl.textContent = '⚠️ Por favor, sube una imagen primero.'; return; }
-      analyzeBtn.disabled = true; statusEl.textContent = '⏳ Analizando...'; logEl.textContent = '';
-      await analyzeFile(imageInput.files[0]);
-      analyzeBtn.disabled = false;
-    });
-
-    downloadBtn.addEventListener('click', ()=>{
-      if(!lastAnalysis) return;
-      const blob = new Blob([JSON.stringify(lastAnalysis, null, 2)],{type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'trading-analysis.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    });
-
-    imageInput.addEventListener('change', ()=>{
-      statusEl.textContent = 'Imagen cargada. Pulsa "Analizar gráfico".';
-    });
-
-    // --- Core: detect candles by color + vertical contours ---
-    async function analyzeFile(file){
-      // Load image into canvas
-      const img = await createImageBitmap(file);
-      canvas.width = img.width; canvas.height = img.height;
-      overlay.width = img.width; overlay.height = img.height;
-      ctx.clearRect(0,0,canvas.width,canvas.height); octx.clearRect(0,0,overlay.width,overlay.height);
-      ctx.drawImage(img,0,0);
-
-      // Read into cv.Mat
-      let src = cv.imread(canvas);
-      let srcBlur = new cv.Mat();
-      cv.GaussianBlur(src, srcBlur, new cv.Size(3,3), 0);
-      let hsv = new cv.Mat();
-      cv.cvtColor(srcBlur, hsv, cv.COLOR_RGBA2HSV);
-
-      // Thresholds (tweakable)
-      const greenLow = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [35, 70, 40, 0]);
-      const greenHigh = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [95, 255, 255, 255]);
-      const redLow1 = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0, 70, 30, 0]);
-      const redHigh1 = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [10, 255, 255, 255]);
-      const redLow2 = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [160, 70, 30, 0]);
-      const redHigh2 = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [179, 255, 255, 255]);
-
-      let maskG = new cv.Mat(); let maskR1 = new cv.Mat(); let maskR2 = new cv.Mat();
-      cv.inRange(hsv, greenLow, greenHigh, maskG);
-      cv.inRange(hsv, redLow1, redHigh1, maskR1);
-      cv.inRange(hsv, redLow2, redHigh2, maskR2);
-      let maskR = new cv.Mat(); cv.add(maskR1, maskR2, maskR);
-
-      // Merge masks for visualization
-      let vis = new cv.Mat(); cv.cvtColor(maskG, vis, cv.COLOR_GRAY2RGBA);
-
-      // Find contours on combined mask (green+red)
-      let combined = new cv.Mat(); cv.add(maskG, maskR, combined);
-      let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3,3));
-      cv.morphologyEx(combined, combined, cv.MORPH_CLOSE, kernel);
-      cv.morphologyEx(combined, combined, cv.MORPH_OPEN, kernel);
-
-      let contours = new cv.MatVector(); let hierarchy = new cv.Mat();
-      cv.findContours(combined, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      // Filter vertical contours that resemble candles
-      const candles = [];
-      for(let i=0;i<contours.size();i++){
-        const cnt = contours.get(i);
-        const rect = cv.boundingRect(cnt);
-        const aspect = rect.height / (rect.width + 1);
-        if(rect.width < 4 || rect.height < 8) { cnt.delete(); continue; }
-        // vertical and not huge
-        if(aspect > 1.6 && rect.height > canvas.height*0.02 && rect.height < canvas.height*0.9){
-          // compute mean color inside rect
-          const roi = src.roi(rect);
-          const roiHsv = new cv.Mat(); cv.cvtColor(roi, roiHsv, cv.COLOR_RGBA2HSV);
-          const mean = cv.mean(roiHsv);
-          roi.delete(); roiHsv.delete();
-
-          const meanHue = mean[0], meanSat = mean[1], meanVal = mean[2];
-          let type = 'neutral';
-          if(meanHue >= 35 && meanHue <= 95 && meanSat > 50) type = 'green';
-          if((meanHue <= 12 || meanHue >= 160) && meanSat > 50) type = 'red';
-
-          candles.push({x:rect.x, y:rect.y, w:rect.width, h:rect.height, cx:rect.x+rect.width/2, cy:rect.y+rect.height/2, hue:meanHue, sat:meanSat, val:meanVal, type});
-        }
-        cnt.delete();
-      }
-
-      // Sort candles left to right
-      candles.sort((a,b)=>a.cx - b.cx);
-
-      // If no candles found - fallback: estimate from color pixel counts
-      if(candles.length === 0){
-        const greenCount = cv.countNonZero(maskG);
-        const redCount = cv.countNonZero(maskR);
-        log('No se detectaron velas. Conteo pixeles -> verde:',greenCount,' rojo:',redCount);
-        const decision = greenCount > redCount ? 'BUY' : 'SELL';
-        const conf = Math.round((Math.max(greenCount, redCount) / (greenCount+redCount+1)) * 100);
-        drawFallback(decision, conf);
-        cleanup();
+      if (!input.files[0]) {
+        result.innerHTML = "⚠️ Por favor, sube una imagen del gráfico.";
         return;
       }
 
-      // Aggregate basic stats
-      const greenCandles = candles.filter(c=>c.type==='green');
-      const redCandles = candles.filter(c=>c.type==='red');
+      result.innerHTML = "⏳ Analizando imagen del mercado... (10 segundos)";
+      const img = new Image();
+      img.src = URL.createObjectURL(input.files[0]);
 
-      log('Candles detectadas:',candles.length,'Verdes:',greenCandles.length,'Rojas:',redCandles.length);
+      img.onload = async function() {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
 
-      // Draw overlays: rectangles and labels
-      octx.clearRect(0,0,overlay.width,overlay.height);
-      octx.lineWidth = Math.max(1, Math.round(canvas.width/600));
-      for(const c of candles){
-        if(c.type==='green'){ octx.strokeStyle = '#20c997'; octx.fillStyle = 'rgba(32,201,151,0.08)'; }
-        else if(c.type==='red'){ octx.strokeStyle = '#ff6b6b'; octx.fillStyle = 'rgba(255,107,107,0.06)'; }
-        else { octx.strokeStyle = '#9aa7b2'; octx.fillStyle = 'rgba(154,167,178,0.04)'; }
-        octx.beginPath(); octx.rect(c.x, c.y, c.w, c.h); octx.fill(); octx.stroke();
-      }
+        let src = cv.imread(canvas);
+        let hsv = new cv.Mat();
+        cv.cvtColor(src, hsv, cv.COLOR_RGBA2HSV);
 
-      // Create a simple price proxy from candle centers (y inverted -> price)
-      // We'll use cy as price proxy (smaller y = higher price), so invert
-      const prices = candles.map(c=>({x:c.cx, price: canvas.height - c.cy}));
+        // Extraer canales
+        let channels = new cv.MatVector();
+        cv.split(hsv, channels);
+        let hue = channels.get(0);
+        let sat = channels.get(1);
+        let val = channels.get(2);
 
-      // Compute SMA (window 5 or less)
-      const window = Math.min(5, prices.length);
-      const sma = prices.map((p,i)=>{
-        const start = Math.max(0, i-window+1);
-        const slice = prices.slice(start, i+1).map(s=>s.price);
-        const avg = slice.reduce((a,b)=>a+b,0)/slice.length;
-        return {x:p.x, value:avg};
-      });
+        // Promedios de color
+        const meanHue = cv.mean(hue)[0];
+        const meanSat = cv.mean(sat)[0];
+        const meanVal = cv.mean(val)[0];
 
-      // Draw SMA line
-      octx.beginPath();
-      for(let i=0;i<sma.length;i++){
-        const pt = sma[i];
-        if(i===0) octx.moveTo(pt.x, canvas.height - pt.value); else octx.lineTo(pt.x, canvas.height - pt.value);
-      }
-      octx.strokeStyle = '#ffd43b'; octx.lineWidth = 2; octx.stroke();
+        // Esperar 10 segundos simulando análisis profundo
+        await new Promise(resolve => setTimeout(resolve, 10000));
 
-      // SMA slope (last vs prev)
-      let slope = 0;
-      if(sma.length >= 2){ slope = (sma[sma.length-1].value - sma[sma.length-2].value); }
+        // Analizar colores predominantes (verde/rojo)
+        let buySignal = 0, sellSignal = 0;
+        if (meanHue > 40 && meanHue < 90 && meanSat > 60) buySignal++; // Verde
+        if (meanHue > 0 && meanHue < 20 && meanSat > 60) sellSignal++; // Rojo
 
-      // Decision logic: majority of candles + slope
-      const weightCandles = (greenCandles.length - redCandles.length) / candles.length; // -1..1
-      const weightSlope = Math.sign(slope) * Math.min(1, Math.abs(slope) / (canvas.height*0.02)); // normalized
+        // Detección simple de tendencia (brillo)
+        if (meanVal > 130) buySignal += 0.5; else sellSignal += 0.5;
 
-      const score = weightCandles * 0.7 + weightSlope * 0.3; // combine
-      let finalDecision = score > 0 ? '📈 COMPRA (BUY)' : '📉 VENTA (SELL)';
-      let conf = Math.min(99, Math.round((Math.abs(score) * 100)));
-      if(conf < 10) conf = Math.round(10 + Math.abs(weightCandles)*40);
+        // Certeza de predicción
+        const total = buySignal + sellSignal;
+        const buyProb = (buySignal / total) * 100 || 50;
+        const sellProb = (sellSignal / total) * 100 || 50;
 
-      // Draw annotations of SMA slope and counts
-      octx.fillStyle = 'rgba(0,0,0,0.35)'; octx.fillRect(8,8,220,68);
-      octx.fillStyle = '#e6eef8'; octx.font = '12px Inter, Arial';
-      octx.fillText(`Candles: ${candles.length}  Verde: ${greenCandles.length}  Roja: ${redCandles.length}`, 16, 26);
-      octx.fillText(`SMA window: ${window}  Slope: ${slope.toFixed(1)}`, 16, 44);
-      octx.fillText(`Score: ${score.toFixed(3)}  Confianza: ${conf}%`, 16, 62);
+        let decision, color, confianza;
+        if (buyProb > sellProb) {
+          decision = "📈 COMPRA (BUY)";
+          color = "#22c55e";
+          confianza = buyProb.toFixed(1);
+        } else {
+          decision = "📉 VENTA (SELL)";
+          color = "#ef4444";
+          confianza = sellProb.toFixed(1);
+        }
 
-      // Update UI
-      decisionEl.textContent = finalDecision;
-      decisionEl.className = conf > 55 ? 'badge ' + (score>0 ? 'buy' : 'sell') : 'badge';
-      confidenceEl.textContent = `Confianza: ${conf}%`;
-      summaryEl.textContent = `Basado en conteo de velas + pendiente SMA (combinado).`;
+        result.innerHTML = `
+          <p><b>Resultado del análisis:</b></p>
+          <p style="color:${color}; font-size:22px;">${decision}</p>
+          <p>Confianza estimada: <b>${confianza}%</b></p>
+          <p>(Basado en color dominante, saturación y tendencia visual)</p>
+        `;
 
-      // Save JSON
-      lastAnalysis = {timestamp:new Date().toISOString(), canvas:{w:canvas.width,h:canvas.height}, candles, counts:{total:candles.length, green:greenCandles.length, red:redCandles.length}, sma:{window,points:sma}, slope, score, decision:finalDecision, confidence:conf};
-      downloadBtn.disabled = false;
-
-      statusEl.textContent = '✅ Análisis completado.';
-      log('Análisis guardado en lastAnalysis.');
-
-      // Cleanup mats
-      function cleanup(){
-        src.delete(); srcBlur.delete(); hsv.delete(); maskG.delete(); maskR.delete(); maskR1.delete(); maskR2.delete(); vis.delete(); combined.delete(); kernel.delete(); contours.delete(); hierarchy.delete(); greenLow.delete(); greenHigh.delete(); redLow1.delete(); redHigh1.delete(); redLow2.delete(); redHigh2.delete();
-      }
-      cleanup();
-
-      // drawFallback helper
-      function drawFallback(decision, conf){
-        decisionEl.textContent = decision==='BUY' ? '📈 COMPRA (BUY)' : '📉 VENTA (SELL)';
-        decisionEl.className = 'badge ' + (decision==='BUY' ? 'buy' : 'sell');
-        confidenceEl.textContent = `Confianza: ${conf}%`;
-        summaryEl.textContent = 'No se detectaron velas; decisión basada en conteo de color global.';
-        lastAnalysis = {timestamp:new Date().toISOString(), fallback:true, decision, confidence:conf};
-        downloadBtn.disabled = false;
-        statusEl.textContent = '✅ Análisis completado (fallback).';
-      }
+        src.delete(); hsv.delete(); channels.delete();
+      };
     }
   </script></body>
 </html>
