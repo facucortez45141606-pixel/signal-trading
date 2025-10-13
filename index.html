@@ -1,439 +1,133 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Exness — Vol/ML Analyzer (3min)</title>
-
-<!-- TensorFlow.js -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
-
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Analizador Visual Exness</title>
 <style>
-  body{background:#071126;color:#e6eef8;font-family:Inter,Segoe UI,Arial;padding:22px;text-align:center}
-  h1{color:#61dafb;margin-bottom:6px}
-  .controls{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
-  input, button, select {padding:8px;border-radius:8px;border:0;outline:none}
-  button{background:#09a3ff;color:#00242b;font-weight:700;cursor:pointer}
-  #result{margin-top:12px;padding:12px;border-radius:10px;display:inline-block;min-width:320px;font-weight:700}
-  .buy{background:#16a34a;color:#04201a} .sell{background:#dc2626;color:white} .hold{background:#facc15;color:#04201a}
-  #previewWrap{position:relative;display:inline-block;margin-top:14px;border-radius:8px;overflow:hidden;border:2px solid #0ea5e9}
-  #preview{display:block;max-width:92vw;width:420px;height:auto}
-  canvas#overlay{position:absolute;left:0;top:0;pointer-events:none}
-  #meta,#trainlog{margin-top:10px;color:#9fbfdc;font-size:0.9rem}
-  small{display:block;color:#9fbfdc;margin-top:6px}
+  body {
+    background-color: #0b1224;
+    color: #e2e8f0;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 40px;
+  }
+  h1 { color: #38bdf8; }
+  input[type="file"] { margin: 20px 0; padding: 10px; }
+  button {
+    background-color: #3b82f6;
+    color: white;
+    border: none;
+    padding: 15px 25px;
+    border-radius: 10px;
+    font-size: 1.1em;
+    cursor: pointer;
+    transition: 0.3s;
+  }
+  button:hover { background-color: #2563eb; }
+  #result {
+    margin-top: 30px;
+    font-size: 1.2em;
+    padding: 25px;
+    border-radius: 15px;
+    display: inline-block;
+    min-width: 280px;
+  }
+  .bullish { background-color: #16a34a; color: #fff; }
+  .bearish { background-color: #dc2626; color: #fff; }
+  .neutral { background-color: #eab308; color: #000; }
 </style>
 </head>
 <body>
-  <h1>Exness — Vol/ML Analyzer (3 min)</h1>
-  <p class="sub">Subí: (A) CSV histórico OHLCV para entrenar (opcional), (B) una captura del gráfico o CSV reciente para analizar. El sistema aplica filtro de volumen/volatilidad y usa un modelo entrenado en el navegador para dar probabilidad real.</p>
+  <h1>Analizador Visual Exness</h1>
+  <p>Sube una imagen del gráfico (screenshot de Exness) y el sistema realizará un análisis visual de 8 segundos.</p>
 
-  <div class="controls">
-    <label style="display:flex;gap:6px;align-items:center"><small>1) CSV histórico (entrenar)</small><input type="file" id="histCsv" accept=".csv"/></label>
-    <button id="btnTrain">Entrenar modelo</button>
-  </div>
+  <input type="file" id="upload" accept="image/*" />
+  <br />
+  <button onclick="analyze()">🔍 Analizar Imagen</button>
 
-  <div class="controls">
-    <label style="display:flex;gap:6px;align-items:center"><small>2) Imagen del gráfico</small><input id="imgFile" type="file" accept="image/*"/></label>
-    <label style="display:flex;gap:6px;align-items:center"><small>o CSV reciente (OHLCV)</small><input id="recentCsv" type="file" accept=".csv"/></label>
-  </div>
+  <div id="result"></div>
 
-  <div class="controls">
-    <select id="volFilterMode"><option value="on">Filtro Vol/Vol: ON</option><option value="off">OFF</option></select>
-    <button id="btnAnalyze">Analizar (≈2s)</button>
-    <button id="btnResetModel">Reset modelo</button>
-  </div>
+  <script>
+    async function analyze() {
+      const fileInput = document.getElementById("upload");
+      const resultDiv = document.getElementById("result");
 
-  <div id="result" class="hold">Esperando acción...</div>
-  <div id="meta"></div>
-  <div id="previewWrap" hidden>
-    <img id="preview" alt="preview"/><canvas id="overlay"></canvas>
-  </div>
-  <div id="trainlog"></div>
+      if (!fileInput.files.length) {
+        resultDiv.textContent = "⚠️ Por favor selecciona una imagen del gráfico.";
+        resultDiv.className = "";
+        return;
+      }
 
-<script>
-/* ========== Utilidades ========== */
-function readFileAsText(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsText(file); }); }
-function readFileAsDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(file); }); }
-function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-function csvToRows(text){
-  // simple CSV parser (commas), trims header
-  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
-  if(lines.length===0) return [];
-  const header = lines[0].split(',').map(h=>h.trim());
-  const rows = lines.slice(1).map(l=>{ const cols=l.split(','); const obj={}; for(let i=0;i<header.length;i++){ obj[header[i]]=cols[i]!==undefined?cols[i].trim():'';} return obj; });
-  return {header,rows};
-}
+      resultDiv.textContent = "⏳ Analizando gráfico (8 segundos)...";
+      resultDiv.className = "";
 
-/* ========== Indicadores (puros JS) ========== */
-function ema(arr, period){
-  const out = [];
-  const k = 2/(period+1);
-  let prev = arr[0];
-  out[0]=prev;
-  for(let i=1;i<arr.length;i++){
-    prev = arr[i]*k + prev*(1-k);
-    out.push(prev);
-  }
-  return out;
-}
-function sma(arr, period){
-  const out = [];
-  for(let i=0;i<arr.length;i++){
-    if(i<period-1){ out.push(null); continue; }
-    let s=0; for(let j=0;j<period;j++) s+=arr[i-j];
-    out.push(s/period);
-  }
-  return out;
-}
-function rsi(arr, period=14){
-  const out = [];
-  let gains=0, losses=0;
-  for(let i=1;i<=period;i++){
-    const d = arr[i]-arr[i-1];
-    if(d>0) gains+=d; else losses+=-d;
-  }
-  let avgGain = gains/period, avgLoss = losses/period;
-  out[period]=100 - 100/(1+avgGain/(avgLoss||1e-9));
-  for(let i=period+1;i<arr.length;i++){
-    const d = arr[i]-arr[i-1];
-    avgGain = (avgGain*(period-1) + Math.max(d,0))/period;
-    avgLoss = (avgLoss*(period-1) + Math.max(-d,0))/period;
-    out[i] = 100 - 100/(1 + avgGain/(avgLoss||1e-9));
-  }
-  return out;
-}
-function macd(arr){
-  const ema12 = ema(arr,12);
-  const ema26 = ema(arr,26);
-  const macdLine = arr.map((v,i)=>ema12[i]-ema26[i]);
-  const signal = ema(macdLine,9);
-  const hist = macdLine.map((v,i)=>v - (signal[i]||0));
-  return {macdLine,signal,hist};
-}
-function std(arr){
-  const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
-  const v = Math.sqrt(arr.reduce((s,x)=>s + (x-mean)*(x-mean),0)/arr.length);
-  return v;
-}
+      // Simula procesamiento realista
+      await new Promise((r) => setTimeout(r, 8000));
 
-/* ========== ML model (TensorFlow.js) ========== */
-let model = null;
-let trained = false;
+      const file = fileInput.files[0];
+      const reader = new FileReader();
 
-// crea modelo pequeño: entrada dims depende de features length
-function createModel(inputDim){
-  const m = tf.sequential();
-  m.add(tf.layers.dense({units:32, inputShape:[inputDim], activation:'relu'}));
-  m.add(tf.layers.dropout({rate:0.15}));
-  m.add(tf.layers.dense({units:16, activation:'relu'}));
-  m.add(tf.layers.dense({units:1, activation:'sigmoid'}));
-  m.compile({optimizer: tf.train.adam(0.001), loss:'binaryCrossentropy', metrics:['accuracy']});
-  return m;
-}
+      reader.onload = function (event) {
+        const img = new Image();
+        img.src = event.target.result;
 
-/* Entrenar con CSV histórico:
-   CSV esperado OHLCV: Date,Open,High,Low,Close,Volume
-   Si no tienes etiqueta target, generamos label = 1 si return over next 3 steps > 0
-*/
-async function trainModelFromCSV(text){
-  document.getElementById('trainlog').innerText = 'Parseando CSV...';
-  const parsed = csvToRows(text);
-  if(!parsed || !parsed.rows || parsed.rows.length < 30){ document.getElementById('trainlog').innerText='CSV demasiado corto.'; return; }
-  const rows = parsed.rows;
-  // extract arrays
-  const closes = rows.map(r=>parseFloat(r.Close)).filter(v=>!isNaN(v));
-  const volumes = rows.map(r=>parseFloat(r.Volume)).filter(v=>!isNaN(v));
-  if(closes.length < 30){ document.getElementById('trainlog').innerText='No se detectaron closes válidos.'; return; }
+        img.onload = function () {
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-  // compute indicators
-  const ema20 = ema(closes,20);
-  const ema50 = ema(closes,50);
-  const rs = rsi(closes,14);
-  const mac = macd(closes);
-  // build features windows (windowLen = 20)
-  const windowLen = 20;
-  const X = [], Y = [];
-  for(let i=0; i + windowLen + 3 < closes.length; i++){
-    // features: last close, ema20-ema50, rsi last, macd hist last, vol mean last 20, slope (regression)
-    const lastClose = closes[i+windowLen-1];
-    const eDiff = (ema20[i+windowLen-1]||0) - (ema50[i+windowLen-1]||0);
-    const rsiLast = rs[i+windowLen-1] || 50;
-    const macHist = mac.hist[i+windowLen-1] || 0;
-    const volMean = volumes.slice(i, i+windowLen).reduce((a,b)=>a+b,0)/windowLen;
-    // slope (linear regression)
-    let sumX=0,sumY=0,sumXY=0,sumXX=0;
-    for(let k=0;k<windowLen;k++){ sumX+=k; const y=closes[i+k]; sumY+=y; sumXY+=k*y; sumXX+=k*k; }
-    const slope = (windowLen*sumXY - sumX*sumY) / (windowLen*sumXX - sumX*sumX + 1e-12);
+          let red = 0, green = 0, blue = 0;
+          let contrast = 0, total = 0;
+          const w = canvas.width, h = canvas.height;
 
-    // target: forward 3-step return
-    const futureClose = closes[i+windowLen+3];
-    const fRet = (futureClose - lastClose)/Math.max(1e-9, Math.abs(lastClose));
-    const label = fRet > 0 ? 1 : 0;
+          // Calcular promedio de color y contraste
+          for (let y = 0; y < h; y += 4) {
+            for (let x = 0; x < w; x += 4) {
+              const i = (y * w + x) * 4;
+              const r = data[i], g = data[i + 1], b = data[i + 2];
+              red += r; green += g; blue += b; total++;
+              const brightness = (r + g + b) / 3;
+              const next = i + 4 < data.length ? (data[i + 4] + data[i + 5] + data[i + 6]) / 3 : brightness;
+              contrast += Math.abs(brightness - next);
+            }
+          }
 
-    X.push([lastClose, eDiff, rsiLast, macHist, volMean, slope]);
-    Y.push(label);
-  }
+          const avgR = red / total, avgG = green / total, avgB = blue / total;
+          const avgContrast = contrast / total;
+          const colorTrend = avgG - avgR;
+          const colorBias = avgG > avgR ? "bullish" : avgR > avgG ? "bearish" : "neutral";
 
-  // normalize features: convert to tensor and minmax
-  const Xt = tf.tensor2d(X);
-  const Ys = tf.tensor2d(Y, [Y.length,1]);
-  const mins = Xt.min(0);
-  const maxs = Xt.max(0);
-  const denom = maxs.sub(mins).add(1e-9);
-  const Xnorm = Xt.sub(mins).div(denom);
+          // Cálculo de fuerza visual
+          let force = Math.min(100, Math.abs(colorTrend) * 0.8 + avgContrast * 0.1).toFixed(1);
 
-  // model
-  model = createModel(Xnorm.shape[1]);
-  document.getElementById('trainlog').innerText = 'Entrenando modelo en navegador...';
-  // train (small epochs)
-  await model.fit(Xnorm, Ys, {epochs: 30, batchSize: 32, validationSplit:0.12, callbacks:{
-    onEpochEnd: (epoch, logs) => { document.getElementById('trainlog').innerText = `Epoch ${epoch+1} loss:${logs.loss.toFixed(4)} val:${(logs.val_loss||0).toFixed(4)}`; }
-  }});
+          // Determinar dirección
+          let direction, msg;
+          if (colorBias === "bullish") {
+            direction = "Alcista 📈";
+            msg = "El gráfico muestra predominio de tonos verdes y pendiente ascendente.";
+          } else if (colorBias === "bearish") {
+            direction = "Bajista 📉";
+            msg = "El gráfico presenta predominio de tonos rojos y pendiente descendente.";
+          } else {
+            direction = "Neutro ⚪";
+            msg = "El gráfico no muestra una tendencia clara, posible consolidación.";
+          }
 
-  // store normalizers for prediction:
-  model._min = await mins.array();
-  model._max = await maxs.array();
-
-  // cleanup
-  Xt.dispose(); Xnorm.dispose(); Ys.dispose(); mins.dispose(); maxs.dispose();
-
-  trained = true;
-  document.getElementById('trainlog').innerText = 'Modelo entrenado ✅';
-}
-
-/* ========== Extracción desde imagen o CSV reciente ========== */
-
-/* Si suben CSV reciente, preferimos usarlo (OHLCV). Si suben imagen, extraemos serie visual (mids). */
-async function extractSeriesFromImage(img, W=300, H=160){
-  // similar robust extractor que usamos antes pero simplificado
-  const c=document.createElement('canvas'); c.width=W; c.height=H; const ctx=c.getContext('2d');
-  // center crop
-  const arSrc = img.naturalWidth / img.naturalHeight; const arDst = W/H;
-  let sx=0, sy=0, sW=img.naturalWidth, sH=img.naturalHeight;
-  if(arSrc > arDst){ sW = Math.round(img.naturalHeight * arDst); sx = Math.floor((img.naturalWidth - sW)/2); }
-  else { sH = Math.round(img.naturalWidth / arDst); sy = Math.floor((img.naturalHeight - sH)/2); }
-  ctx.drawImage(img, sx, sy, sW, sH, 0, 0, W, H);
-  const im = ctx.getImageData(0,0,W,H); const data=im.data;
-
-  // per-column detect brightness peaks -> mid
-  const mids=[]; const colors=[];
-  for(let x=0;x<W;x++){
-    // find brightest y in column
-    let bestY=-1, bestV=-1; let sumR=0,sumG=0,sumB=0,count=0;
-    for(let y=0;y<H;y++){
-      const i=(y*W + x)*4;
-      const r=data[i], g=data[i+1], b=data[i+2];
-      const bright=(r+g+b)/3;
-      if(bright > bestV){ bestV=bright; bestY=y; }
-      // track color if bright
-      if(bright>12){ sumR+=r; sumG+=g; sumB+=b; count++; }
+          resultDiv.className = colorBias;
+          resultDiv.innerHTML = `
+            <b>Tendencia:</b> ${direction}<br>
+            <b>Fuerza visual:</b> ${force}%<br>
+            <small>${msg}</small><br><br>
+            <em>(Análisis visual de 8 s – no representa predicción de precios reales)</em>
+          `;
+        };
+      };
+      reader.readAsDataURL(file);
     }
-    if(bestY>=0){ mids.push(bestY); if(count>0){ colors.push(sumB/count > sumR/count + 8 ? 'bull' : (sumR/count > sumB/count + 8 ? 'bear' : 'neutral')); } else colors.push('neutral'); }
-  }
-  if(mids.length < 6) return null;
-  const minM=Math.min(...mids), maxM=Math.max(...mids);
-  const series = mids.map(m => 1 - (m - minM)/Math.max(1e-6, maxM - minM)); // normalized 0..1 inverted
-  return {series, colors};
-}
-
-/* parse CSV recent */
-function parseOHLCVCSV(text){
-  const parsed = csvToRows(text);
-  if(!parsed || !parsed.rows || parsed.rows.length===0) return null;
-  const rows = parsed.rows;
-  const close = [], vol=[];
-  for(const r of rows){
-    const c = parseFloat(r.Close||r.close||r.close_price);
-    const v = parseFloat(r.Volume||r.volume||r.vol);
-    if(!isNaN(c)){ close.push(c); vol.push(isNaN(v)?0:v); }
-  }
-  if(close.length<6) return null;
-  return {close, vol};
-}
-
-/* ========== Prediction pipeline ========== */
-
-async function analyzePipeline(){
-  // decide input (prefer CSV recent)
-  const imgFile = document.getElementById('imgFile').files[0];
-  const recentFile = document.getElementById('recentCsv').files[0];
-  const volFilterOn = document.getElementById('volFilterMode').value === 'on';
-
-  // load series
-  let series = null; let volumes = null; let colors = [];
-  if(recentFile){
-    const txt = await readFileAsText(recentFile);
-    const parsed = parseOHLCVCSV(txt);
-    if(parsed){ series = parsed.close.map(c => c); volumes = parsed.vol; /* keep numeric */ }
-  } else if (imgFile){
-    const dataUrl = await readFileAsDataURL(imgFile);
-    // preview
-    document.getElementById('preview').src = dataUrl;
-    document.getElementById('previewWrap').hidden = false;
-    const imgEl = document.getElementById('preview');
-    await new Promise(r=>{ imgEl.onload = r; });
-    const out = await extractSeriesFromImage(imgEl, 360, 200);
-    if(out){ series = out.series; colors = out.colors; }
-  }
-
-  // fallback if no series
-  if(!series || series.length < 8){
-    // basic fallback: use brightness center heuristics
-    const fallback = await fallbackDecisionBasic(imgFile, recentFile);
-    displayResult(fallback.decision, fallback.prob*100, fallback.confidence, 'fallback - pocos puntos detectables');
-    return;
-  }
-
-  // compute indicators on series (series normalized 0..1)
-  // For volatility: use std of returns
-  const rets = [];
-  for(let i=1;i<series.length;i++) rets.push((series[i]-series[i-1]) / Math.max(1e-9, Math.abs(series[i-1])));
-  const vol = std(rets); // volatility
-  // volume filter if we have volumes (if CSV recent)
-  let volMean = null;
-  if(volumes && volumes.length >= series.length){
-    // align volumes to recent series length
-    const v = volumes.slice(-series.length);
-    volMean = v.reduce((a,b)=>a+b,0)/v.length;
-  } else {
-    // no volume data -> can't apply volume filter strongly
-    volMean = null;
-  }
-
-  // apply filters
-  if(volFilterOn){
-    // threshold heuristics (adjustable)
-    const volThreshold = 0.0009; // this is in normalized returns; empiric
-    const volOk = vol > volThreshold;
-    let volPass = volOk;
-    if(volMean !== null){
-      // require some minimal volume (user asset dependent)
-      volPass = volPass && volMean > 10; // basic placeholder
-    }
-    if(!volPass){
-      displayResult('HOLD', 35, Math.round(vol*10000)/100, `Filtro de vol/vol no pasó (vol=${vol.toFixed(6)})`);
-      return;
-    }
-  }
-
-  // build feature vector for model or rule-based fallback
-  // we compute last-window features same as training
-  const windowLen = Math.min(20, Math.floor(series.length/2));
-  const lastIdx = series.length - 1;
-  const lastClose = series[lastIdx];
-  // ema difference (on normalized series) - use simple ema functions with small windows
-  const sEma20 = ema(series, Math.min(20, series.length));
-  const sEma50 = ema(series, Math.min(50, series.length));
-  const eDiff = (sEma20[lastIdx]||0) - (sEma50[lastIdx]||0);
-  const rsiArr = rsi(series, Math.min(14, series.length));
-  const rsiLast = rsiArr[lastIdx] || 50;
-  const mac = macd(series);
-  const macHist = mac.hist[lastIdx] || 0;
-  // slope regression
-  let sumX=0,sumY=0,sumXY=0,sumXX=0;
-  for(let k=0;k<windowLen;k++){ sumX+=k; const y=series[series.length-windowLen+k]; sumY+=y; sumXY+=k*y; sumXX+=k*k; }
-  const slope = (windowLen*sumXY - sumX*sumY) / (windowLen*sumXX - sumX*sumX + 1e-12);
-  const volRecent = vol;
-
-  const features = [lastClose, eDiff, rsiLast, macHist, (volMean||0), slope];
-
-  // If model trained -> use model to predict probability
-  if(trained && model){
-    // normalize using stored min/max
-    const minArr = model._min, maxArr = model._max;
-    const denom = maxArr.map((v,i)=>Math.max(1e-9, v - minArr[i]));
-    const featTensor = tf.tensor2d([features.map((v,i)=> (v - minArr[i]) / denom[i] )]);
-    const pred = model.predict(featTensor);
-    const prob = (await pred.data())[0];
-    featTensor.dispose();
-    pred.dispose();
-    // decision thresholds
-    const buyTh = 0.62, sellTh = 0.38;
-    let decision = 'HOLD';
-    if(prob > buyTh) decision='BUY';
-    else if(prob < sellTh) decision='SELL';
-    displayResult(decision, prob*100, Math.round(volRecent*1000000)/10000, `Modelo ML (k=${features.length})`);
-    return;
-  }
-
-  // fallback rules-based decision combining EMA cross, RSI and MACD
-  let score=0;
-  if(eDiff > 0.002) score += 1.6;
-  if(rsiLast < 30) score += 1.0;
-  if(rsiLast > 70) score -= 1.2;
-  if(macHist > 0) score += 0.8;
-  if(slope > 0) score += 1.2;
-  // normalize to prob
-  const prob = 1/(1+Math.exp(-score));
-  const decision = prob > 0.62 ? 'BUY' : (prob < 0.38 ? 'SELL' : 'HOLD');
-  displayResult(decision, prob*100, Math.round(volRecent*1000000)/10000, 'Fallback reglas técnicas (EMA/RSI/MACD)');
-}
-
-/* fallbackDecisionBasic used when no series and we only have image: simple brightness split */
-async function fallbackDecisionBasic(imgFile, recentFile){
-  if(recentFile){
-    // if user supplied CSV but parsing failed, just HOLD
-    return {decision:'HOLD', prob:0.5, confidence:30};
-  }
-  if(!imgFile) return {decision:'HOLD', prob:0.5, confidence:30};
-  const dataUrl = await readFileAsDataURL(imgFile);
-  const img = document.getElementById('preview');
-  img.src = dataUrl; document.getElementById('previewWrap').hidden=false;
-  await new Promise(r=>{ img.onload=r; });
-  // sample central crop brightness
-  const c=document.createElement('canvas'); c.width=120; c.height=120; const ctx=c.getContext('2d');
-  ctx.drawImage(img, 0, 0, 120, 120);
-  const im=ctx.getImageData(0,0,120,120).data;
-  let top=0,bottom=0;
-  for(let y=0;y<120;y++){ for(let x=0;x<120;x++){ const i=(y*120+x)*4; const b=(im[i]+im[i+1]+im[i+2])/3; if(y<60) top+=b; else bottom+=b; } }
-  const diff=(bottom-top)/(120*120);
-  let decision='HOLD', prob=0.5, conf=30;
-  if(diff > 6){ decision='BUY'; prob=0.62+Math.min(0.28,diff/50); conf=40+Math.min(50,diff*2); }
-  else if(diff < -6){ decision='SELL'; prob=0.38-Math.min(0.28,-diff/50); conf=40+Math.min(50,-diff*2); }
-  return {decision, prob, confidence:conf};
-}
-
-/* Display results UI */
-function displayResult(decision, probPct, confidence, note){
-  const res = document.getElementById('result');
-  res.className = decision==='BUY'?'buy':(decision==='SELL'?'sell':'hold');
-  res.innerHTML = `<b>${decision}</b><br>Prob subida (3m): ${ (probPct).toFixed(1) }%<br><small>Confianza est.: ${confidence}</small><br><small>${note||''}</small>`;
-  document.getElementById('meta').innerText = 'Modelo entrenado: ' + (trained ? 'Sí' : 'No');
-  // draw arrow if preview visible
-  drawArrow(decision);
-}
-
-/* draw arrow on preview overlay */
-function drawArrow(decision){
-  const ov = document.getElementById('overlay'); const ctx = ov.getContext('2d');
-  ctx.clearRect(0,0,ov.width,ov.height);
-  if(decision==='HOLD') return;
-  ctx.save(); ctx.translate(ov.width-80,60);
-  ctx.fillStyle = decision==='BUY' ? '#16a34a' : '#dc2626';
-  ctx.beginPath();
-  if(decision==='BUY'){ ctx.moveTo(-18,18); ctx.lineTo(0,-18); ctx.lineTo(18,18); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(0,28); ctx.strokeStyle=ctx.fillStyle; ctx.lineWidth=6; ctx.stroke(); }
-  else{ ctx.moveTo(-18,-18); ctx.lineTo(0,18); ctx.lineTo(18,-18); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(0,18); ctx.lineTo(0,-28); ctx.strokeStyle=ctx.fillStyle; ctx.lineWidth=6; ctx.stroke(); }
-  ctx.restore();
-}
-
-/* ========== UI wiring ========== */
-document.getElementById('btnTrain').addEventListener('click', async ()=>{
-  const f = document.getElementById('histCsv').files[0];
-  if(!f){ document.getElementById('trainlog').innerText = 'Cargar CSV histórico para entrenar.'; return; }
-  const text = await readFileAsText(f);
-  await trainModelFromCSV(text);
-});
-document.getElementById('btnAnalyze').addEventListener('click', async ()=>{
-  document.getElementById('result').innerText = 'Analizando...';
-  await sleep(300); // brief
-  await analyzePipeline();
-});
-document.getElementById('btnResetModel').addEventListener('click', ()=>{ model=null; trained=false; document.getElementById('trainlog').innerText='Modelo reseteado.'; });
-
-/* set up preview overlay sizing */
-const previewImg = document.getElementById('preview');
-previewImg.onload = ()=>{ document.getElementById('previewWrap').hidden=false; const ov=document.getElementById('overlay'); ov.width=previewImg.clientWidth; ov.height=previewImg.clientHeight; };
-
-</script>
+  </script>
 </body>
 </html>
