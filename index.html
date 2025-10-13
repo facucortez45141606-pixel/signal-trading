@@ -1,333 +1,341 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Signal Trading - Simulador</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Signal Trading - Analizador por Imagen</title>
 <style>
-body {
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: 'Segoe UI', sans-serif;
-  margin: 0;
-  padding: 0;
-}
-header {
-  background: #1e293b;
-  padding: 15px;
-  text-align: center;
-  font-size: 1.3em;
-  font-weight: bold;
-  color: #38bdf8;
-}
-.container {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 10px;
-  padding: 10px;
-}
-canvas {
-  background: #1e293b;
-  border-radius: 10px;
-  width: 100%;
-  height: 400px;
-}
-.controls {
-  background: #1e293b;
-  border-radius: 10px;
-  padding: 15px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.controls label {
-  font-size: 0.9em;
-  color: #94a3b8;
-}
-button {
-  background: #38bdf8;
-  color: #0f172a;
-  font-weight: bold;
-  border: none;
-  padding: 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: 0.2s;
-}
-button:hover { background: #0ea5e9; }
-.log {
-  background: #0f172a;
-  border-top: 1px solid #1e293b;
-  padding: 10px;
-  height: 150px;
-  overflow-y: auto;
-  font-size: 0.85em;
-}
-.green { color: #22c55e; }
-.red { color: #ef4444; }
+body { background:#0f172a; color:#e2e8f0; font-family: 'Segoe UI', sans-serif; margin:0; padding:0; }
+header { background:#1e293b; padding:15px; text-align:center; font-size:1.2em; font-weight:bold; color:#38bdf8; }
+.container { display:grid; grid-template-columns: 1fr 300px; gap:10px; padding:10px; }
+.canvas-wrap { background:#0b1220; border-radius:10px; padding:10px; }
+canvas#chart { background:#0f172a; border-radius:8px; width:100%; height:400px; display:block; }
+.controls { background:#1e293b; border-radius:10px; padding:15px; display:flex; flex-direction:column; gap:10px; }
+.controls label { font-size:0.9em; color:#94a3b8; }
+button { background:#38bdf8; color:#0f172a; font-weight:bold; border:none; padding:10px; border-radius:8px; cursor:pointer; transition:0.15s; }
+button:hover { background:#0ea5e9; }
+.log { background:#0f172a; border-top:1px solid #1e293b; padding:10px; height:140px; overflow:auto; font-size:0.85em; }
+.green { color:#22c55e; } .red { color:#ef4444; }
+input[type=file]{ color:#94a3b8; }
+.small { font-size:0.85em; color:#94a3b8; }
 </style>
 </head>
 <body>
-<header>📈 Signal Trading - Simulador Avanzado</header>
+<header>📸 Signal Trading - Analizador por Imagen</header>
+
 <div class="container">
-  <div>
+  <div class="canvas-wrap">
     <canvas id="chart"></canvas>
     <div id="summary" style="padding:10px;"></div>
+    <div class="small" style="padding:10px;">Sube una captura del gráfico (pantalla con la vela/curva). El analizador extrae la línea de precio y calcula indicadores técnicos.</div>
   </div>
+
   <div class="controls">
-    <label>Velocidad de Análisis:
-      <select id="mode">
-        <option value="agresivo">Agresivo</option>
-        <option value="equilibrado" selected>Equilibrado</option>
-        <option value="conservador">Conservador</option>
-      </select>
+    <label>Subir imagen:
+      <input id="imgInput" type="file" accept="image/*" />
     </label>
-    <label>EMA Corta: <input id="emaShort" type="number" value="7"></label>
-    <label>EMA Larga: <input id="emaLong" type="number" value="21"></label>
-    <label>RSI Periodo: <input id="rsiP" type="number" value="14"></label>
-    <label>MACD Lento: <input id="macdSlow" type="number" value="26"></label>
-    <button id="runAnalysis">Ejecutar Análisis</button>
-    <button id="backtestBtn">Backtest Local</button>
-    <button id="downloadReport">Descargar Reporte</button>
-    <button id="downloadCSV">Descargar CSV</button>
-    <small id="timer"></small>
+
+    <label>Velocidad / Sensibilidad:
+      <select id="mode"><option value="agresivo">Agresivo</option><option selected value="equilibrado">Equilibrado</option><option value="conservador">Conservador</option></select>
+    </label>
+
+    <label>EMA Corta: <input id="emaShort" type="number" value="7" /></label>
+    <label>EMA Larga: <input id="emaLong" type="number" value="21" /></label>
+    <label>RSI Periodo: <input id="rsiP" type="number" value="14" /></label>
+
+    <button id="analyzeBtn">Analizar Imagen</button>
+    <button id="autoEnhance">Auto-enhance (mejor extracción)</button>
+
+    <div class="small" id="timer"></div>
   </div>
 </div>
+
 <div class="log" id="log"></div>
 
 <script>
-/* ======== FUNCIONES DE INDICADORES ======== */
-function EMA(data, period, accessor){
-  const k = 2 / (period + 1);
-  const emaArray = [];
-  let emaPrev = accessor(data[0]);
-  emaArray.push(emaPrev);
-  for (let i = 1; i < data.length; i++) {
-    const val = accessor(data[i]);
-    emaPrev = val * k + emaPrev * (1 - k);
-    emaArray.push(emaPrev);
-  }
-  return emaArray;
-}
-
-function RSI(data, period, accessor){
-  let gains = 0, losses = 0;
-  const result = [];
-  for (let i = 1; i < data.length; i++){
-    const diff = accessor(data[i]) - accessor(data[i - 1]);
-    if (i <= period){
-      if (diff >= 0) gains += diff; else losses -= diff;
-      result.push(null);
-      continue;
-    }
-    if (i === period + 1){
-      let avgGain = gains / period;
-      let avgLoss = losses / period;
-      const rs = avgGain / avgLoss;
-      result.push(100 - (100 / (1 + rs)));
-    } else {
-      const prev = result[result.length - 1];
-      const gain = diff > 0 ? diff : 0;
-      const loss = diff < 0 ? -diff : 0;
-      gains = (gains * (period - 1) + gain) / period;
-      losses = (losses * (period - 1) + loss) / period;
-      const rs = gains / losses;
-      result.push(100 - (100 / (1 + rs)));
-    }
-  }
-  result.unshift(null);
-  return result;
-}
-
-function MACD(data, fast, slow, signal, accessor){
-  const emaFast = EMA(data, fast, accessor);
-  const emaSlow = EMA(data, slow, accessor);
-  const macdLine = emaFast.map((v, i) => v - emaSlow[i]);
-  const signalLine = EMA(macdLine.map(v => ({v})), signal, d => d.v);
-  const hist = macdLine.map((v, i) => v - signalLine[i]);
-  return { macdLine, signalLine, hist };
-}
-
-/* ======== FUNCIONES DE UTILIDAD ======== */
-function clamp(n, min, max){ return Math.max(min, Math.min(n, max)); }
+/* ---------------- UTILIDADES y LOG ---------------- */
 function log(msg){
-  const el = document.getElementById('log');
+  const el=document.getElementById('log');
   el.innerHTML += `<div>${new Date().toLocaleTimeString()} → ${msg}</div>`;
   el.scrollTop = el.scrollHeight;
 }
-function simulateProgress(ms){
-  return new Promise(res=>setTimeout(res, ms));
+
+/* ---------------- INDICADORES (mismas funciones que tenías) ---------------- */
+function EMA(data, period, accessor){
+  if(!data.length) return [];
+  const k = 2/(period+1);
+  const out = [];
+  let prev = accessor(data[0]);
+  out.push(prev);
+  for(let i=1;i<data.length;i++){
+    const v = accessor(data[i]);
+    prev = v * k + prev * (1-k);
+    out.push(prev);
+  }
+  return out;
 }
+function RSI(data, period, accessor){
+  if(data.length<=period) return new Array(data.length).fill(null);
+  let gains=0, losses=0;
+  const out = new Array(data.length).fill(null);
+  for(let i=1;i<=period;i++){
+    const diff = accessor(data[i]) - accessor(data[i-1]);
+    if(diff>=0) gains += diff; else losses += -diff;
+  }
+  let avgGain = gains/period, avgLoss = losses/period;
+  out[period] = 100 - (100/(1 + avgGain/(avgLoss||1e-9)));
+  for(let i=period+1;i<data.length;i++){
+    const diff = accessor(data[i]) - accessor(data[i-1]);
+    const gain = diff>0?diff:0;
+    const loss = diff<0?-diff:0;
+    avgGain = (avgGain*(period-1) + gain)/period;
+    avgLoss = (avgLoss*(period-1) + loss)/period;
+    out[i] = 100 - (100/(1 + avgGain/(avgLoss||1e-9)));
+  }
+  return out;
+}
+function MACD(data, fast, slow, signal, accessor){
+  const emaFast = EMA(data, fast, accessor);
+  const emaSlow = EMA(data, slow, accessor);
+  const macdLine = emaFast.map((v,i)=>v - (emaSlow[i]||v));
+  const signalLine = EMA(macdLine.map(v=>({v})), signal, d=>d.v);
+  const hist = macdLine.map((v,i)=>v - (signalLine[i]||0));
+  return {macdLine, signalLine, hist};
+}
+function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
 
-/* ======== DIBUJAR GRÁFICO ======== */
-function drawChart(canvasId, data, ema, signals){
-  const canvas = document.getElementById(canvasId);
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width = canvas.clientWidth;
-  const h = canvas.height = canvas.clientHeight;
+/* ---------------- DIBUJADO ---------------- */
+function drawSeries(canvasId, prices, emaShortArr, emaLongArr, signal){
+  const canvas=document.getElementById(canvasId);
+  const ctx=canvas.getContext('2d');
+  const w=canvas.width=canvas.clientWidth;
+  const h=canvas.height=canvas.clientHeight;
   ctx.clearRect(0,0,w,h);
-  const closes = data.map(d => d.close);
-  const max = Math.max(...closes);
-  const min = Math.min(...closes);
-  const range = max - min;
-  const top = max + range * 0.05;
-  const bottom = min - range * 0.05;
-
-  ctx.strokeStyle = "#38bdf8";
-  ctx.beginPath();
-  closes.forEach((c, i) => {
-    const x = i / (closes.length - 1) * (w - 40) + 20;
-    const y = (top - c) / (top - bottom) * (h - 20) + 10;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  if(!prices.length) return;
+  const max=Math.max(...prices), min=Math.min(...prices);
+  const pad=20;
+  function xy(i,val){
+    const x = pad + i/(prices.length-1)*(w-2*pad||1);
+    const y = pad + (1 - (val - min)/(max-min||1))*(h-2*pad);
+    return {x,y};
+  }
+  // price line
+  ctx.lineWidth=2; ctx.strokeStyle="#38bdf8"; ctx.beginPath();
+  prices.forEach((p,i)=>{
+    const pt=xy(i,p);
+    if(i===0) ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y);
   });
   ctx.stroke();
-
   // EMAs
-  if (ema.emaShort){
-    ctx.strokeStyle = "#22c55e";
-    ctx.beginPath();
-    ema.emaShort.forEach((c, i) => {
-      const x = i / (closes.length - 1) * (w - 40) + 20;
-      const y = (top - c) / (top - bottom) * (h - 20) + 10;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
+  if(emaShortArr && emaShortArr.length){
+    ctx.strokeStyle="#22c55e"; ctx.lineWidth=1.6; ctx.beginPath();
+    emaShortArr.forEach((v,i)=>{ const pt=xy(i,v); if(i===0) ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y);});
     ctx.stroke();
   }
-  if (ema.emaLong){
-    ctx.strokeStyle = "#ef4444";
-    ctx.beginPath();
-    ema.emaLong.forEach((c, i) => {
-      const x = i / (closes.length - 1) * (w - 40) + 20;
-      const y = (top - c) / (top - bottom) * (h - 20) + 10;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
+  if(emaLongArr && emaLongArr.length){
+    ctx.strokeStyle="#ef4444"; ctx.lineWidth=1.6; ctx.beginPath();
+    emaLongArr.forEach((v,i)=>{ const pt=xy(i,v); if(i===0) ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y);});
     ctx.stroke();
   }
-
-  // Señales BUY / SELL
-  if (signals && signals.length){
-    for (const s of signals){
-      const idx = s.idx;
-      if (idx < 0 || idx >= closes.length) continue;
-      const x = idx / (closes.length - 1) * (w - 40) + 20;
-      const y = (top - closes[idx]) / (top - bottom) * (h - 20) + 10;
-      ctx.beginPath();
-      if (s.type === 'BUY'){ ctx.fillStyle = '#22c55e'; ctx.arc(x, y - 8, 6, 0, Math.PI * 2); ctx.fill(); }
-      if (s.type === 'SELL'){ ctx.fillStyle = '#ef4444'; ctx.arc(x, y + 8, 6, 0, Math.PI * 2); ctx.fill(); }
-    }
-  }
+  // last point marker
+  const last = xy(prices.length-1, prices[prices.length-1]);
+  ctx.beginPath(); ctx.fillStyle = signal==="COMPRAR" ? "#22c55e" : "#ef4444";
+  ctx.arc(last.x, last.y, 6, 0, Math.PI*2); ctx.fill();
 }
 
-/* ======== LÓGICA DE DECISIÓN (sin neutro) ======== */
-function decideFromIndicators(data, params){
-  const closeAccessor = d => d.close;
-  const emaShort = EMA(data, params.emaShort, closeAccessor);
-  const emaLong = EMA(data, params.emaLong, closeAccessor);
-  const rsi = RSI(data, params.rsiP, closeAccessor);
-  const macd = MACD(data, params.emaShort, params.emaLong, params.macdSlow, closeAccessor);
-
-  const returns = [];
-  for (let i = 1; i < data.length; i++){
-    returns.push((data[i].close - data[i-1].close) / data[i-1].close);
+/* ---------------- PROCESAMIENTO DE IMAGEN (simple y robusto) ----------------
+   - Reduce ancho a maxCols (por ejemplo 200) para velocidad
+   - Convierte a gris, aplica sobel (gradiente) para bordes
+   - Para cada columna busca el "centroide vertical" de los bordes -> línea de precio
+   - Normaliza y devuelve arreglo de precios (float)
+*/
+function extractPriceSeriesFromImage(img, maxCols=200, doEnhance=false){
+  const off = document.createElement('canvas');
+  const iw = img.width, ih = img.height;
+  const scale = Math.min(1, maxCols / iw);
+  const w = Math.max(20, Math.round(iw * scale));
+  const h = Math.round(ih * scale);
+  off.width = w; off.height = h;
+  const ctx = off.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  let imgd = ctx.getImageData(0,0,w,h);
+  // grayscale
+  const gray = new Uint8ClampedArray(w*h);
+  for(let i=0;i<w*h;i++){
+    const r = imgd.data[i*4], g=imgd.data[i*4+1], b=imgd.data[i*4+2];
+    // optional contrast enhance
+    const v = 0.2126*r + 0.7152*g + 0.0722*b;
+    gray[i] = v;
   }
-  function rollingStd(arr, win){
-    const o = [];
-    for (let i=0;i<arr.length;i++){
-      if (i<win-1) o.push(null);
-      else {
-        let s=0,m=0;
-        for (let j=i-win+1;j<=i;j++) m+=arr[j];
-        m/=win;
-        for (let j=i-win+1;j<=i;j++){ const d=arr[j]-m; s+=d*d; }
-        o.push(Math.sqrt(s/win));
-      }
+  // optional simple contrast/threshold enhancement
+  if(doEnhance){
+    // stretch histogram
+    let min=255,max=0;
+    for(let i=0;i<gray.length;i++){ if(gray[i]<min)min=gray[i]; if(gray[i]>max)max=gray[i]; }
+    const range = Math.max(1, max-min);
+    for(let i=0;i<gray.length;i++){
+      gray[i] = clamp(Math.round((gray[i]-min)/range*255),0,255);
     }
-    return o;
   }
-  const vol = returns.length ? rollingStd(returns,10) : [];
-  vol.unshift(null);
-
-  let greenSeq=0,redSeq=0;
-  for(let i=Math.max(0,data.length-20);i<data.length;i++){
-    if(data[i].close>data[i].open)greenSeq++;
-    else if(data[i].close<data[i].open)redSeq++;
+  // Sobel (simple) to get edges magnitude
+  const sobel = new Float32Array(w*h);
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const i = y*w + x;
+      const gx =
+        -1*gray[i-w-1] + 1*gray[i-w+1] +
+        -2*gray[i-1]   + 2*gray[i+1] +
+        -1*gray[i+w-1] + 1*gray[i+w+1];
+      const gy =
+        -1*gray[i-w-1] -2*gray[i-w] -1*gray[i-w+1] +
+         1*gray[i+w-1] +2*gray[i+w] +1*gray[i+w+1];
+      sobel[i] = Math.hypot(gx,gy);
+    }
   }
-
-  const i = data.length - 1;
-  const signals = [];
-
-  const emaShortVal = emaShort[i], emaLongVal = emaLong[i];
-  if (emaShortVal>emaLongVal) signals.push('BUY');
-  else if (emaShortVal<emaLongVal) signals.push('SELL');
-
-  const rsiVal = rsi[i];
-  if (rsiVal<30) signals.push('BUY');
-  else if (rsiVal>70) signals.push('SELL');
-
-  const macdVal = macd.hist[i];
-  if (macdVal>0) signals.push('BUY');
-  else if (macdVal<0) signals.push('SELL');
-
-  if (greenSeq>=3) signals.push('BUY');
-  if (redSeq>=3) signals.push('SELL');
-
-  let buyWeight=0,sellWeight=0;
-  signals.forEach(s=>{ if(s==='BUY')buyWeight++; if(s==='SELL')sellWeight++; });
-
-  if(params.mode==='agresivo'){ buyWeight*=1.2; sellWeight*=1.2; }
-  if(params.mode==='conservador'){ buyWeight*=0.9; sellWeight*=0.9; }
-
-  const final = buyWeight>=sellWeight ? 'COMPRAR' : 'VENDER';
-
-  const volVal = vol[i];
-  const conf = clamp(
-    (Math.abs(buyWeight-sellWeight)/Math.max(1,buyWeight+sellWeight))*100*(1+((volVal||0)*100)),
-    10,99
-  );
-
-  let duration='Indeterminado';
-  if(conf>75)duration=params.mode==='agresivo'?'1-3 min':
-                        params.mode==='equilibrado'?'3-10 min':'10-30 min';
-  else if(conf>50)duration=params.mode==='agresivo'?'3-6 min':'5-15 min';
-  else duration='Baja confianza';
-
-  return {decision:final,confidence:Math.round(conf),duration};
-}
-
-/* ======== SIMULACIÓN PRINCIPAL ======== */
-let loadedData = [];
-for (let i=0;i<200;i++){
-  loadedData.push({
-    t:i,
-    open:100+Math.sin(i/10)*5+Math.random()*2,
-    close:100+Math.sin(i/10)*5+Math.random()*2,
+  // For each column, compute weighted average (centroid) of edge positions (stronger edges count more)
+  const prices = [];
+  for(let x=0;x<w;x++){
+    let sumW=0, sumY=0;
+    for(let y=0;y<h;y++){
+      const v = sobel[y*w + x];
+      if(v>10){ sumW += v; sumY += v*y; }
+    }
+    if(sumW>0) prices.push(sumY / sumW); else prices.push(null);
+  }
+  // Interpolate nulls
+  for(let i=0;i<prices.length;i++){
+    if(prices[i]===null){
+      // find nearest not-null left/right
+      let l=i-1; while(l>=0 && prices[l]===null) l--;
+      let r=i+1; while(r<prices.length && prices[r]===null) r++;
+      if(l>=0 && r<prices.length) prices[i] = prices[l] + (prices[r]-prices[l])*( (i-l)/(r-l) );
+      else if(l>=0) prices[i] = prices[l];
+      else if(r<prices.length) prices[i] = prices[r];
+      else prices[i]=h/2;
+    }
+  }
+  // invert and scale: lower y => higher price. We map [0,h] -> arbitrary price scale
+  const minY = Math.min(...prices), maxY = Math.max(...prices);
+  const series = prices.map(y => {
+    // invert
+    const p = (maxY - y) / (maxY - minY || 1);
+    // map to 100..200 arbitrary price base (we only need relative moves)
+    return 100 + p * 20;
   });
+  return series;
 }
 
-document.getElementById('runAnalysis').addEventListener('click', async ()=>{
-  document.getElementById('timer').textContent='Analizando...';
-  await simulateProgress(1500);
-  const params={
-    emaShort:Number(document.getElementById('emaShort').value),
-    emaLong:Number(document.getElementById('emaLong').value),
-    rsiP:Number(document.getElementById('rsiP').value),
-    macdSlow:Number(document.getElementById('macdSlow').value),
-    mode:document.getElementById('mode').value
-  };
-  const report=decideFromIndicators(loadedData,params);
-  const signals=[];
-  if(report.decision==='COMPRAR')signals.push({type:'BUY',idx:loadedData.length-1});
-  else signals.push({type:'SELL',idx:loadedData.length-1});
-  drawChart('chart',loadedData,{
-    emaShort:EMA(loadedData,params.emaShort,d=>d.close),
-    emaLong:EMA(loadedData,params.emaLong,d=>d.close)
-  },signals);
-  document.getElementById('summary').innerHTML=
-    `Decisión: <b class="${report.decision==='COMPRAR'?'green':'red'}">${report.decision}</b> 
-     (${report.confidence}% confianza, duración ${report.duration})`;
-  log(`Decisión final: ${report.decision} (${report.confidence}% confianza)`);
-  document.getElementById('timer').textContent='Listo';
+/* ---------------- DECISION (usa tus reglas previas; NO neutro) ---------------- */
+function decideFromSeries(series, params){
+  // build fake candles from prices: open = previous, close = current
+  const data = series.map((p,i)=>({
+    t:i, open: i?series[i-1]:series[0], close:p
+  }));
+  const emaShortArr = EMA(data, params.emaShort, d=>d.close);
+  const emaLongArr = EMA(data, params.emaLong, d=>d.close);
+  const rsiArr = RSI(data, params.rsiP, d=>d.close);
+  const macd = MACD(data, params.emaShort, params.emaLong, 9, d=>d.close);
+
+  // compute subsignals at last index
+  const i = data.length - 1;
+  const subs = {trend:0, rsi:0, macd:0, recent:0};
+  if(emaShortArr[i] > (emaLongArr[i]||0)) subs.trend = 1; else subs.trend = 0;
+  if(rsiArr[i] !== null){
+    subs.rsi = clamp((rsiArr[i]-30)/(70-30), 0, 1); // 0..1 scaled
+  } else subs.rsi = 0.5;
+  subs.macd = macd.hist[i] > 0 ? 1 : 0;
+  // recent candles color sequence
+  let green=0, red=0;
+  for(let k=Math.max(0,data.length-20); k<data.length; k++){
+    if(data[k].close > data[k].open) green++; else if(data[k].close < data[k].open) red++;
+  }
+  if(green >= 3) subs.recent = 1;
+  if(red >= 3) subs.recent = -1;
+
+  // weights
+  let w = {trend:0.28, rsi:0.18, macd:0.18, recent:0.18};
+  let buyScore = subs.trend * w.trend + subs.rsi * w.rsi + subs.macd * w.macd + (subs.recent===1? w.recent:0);
+  let sellScore = (1-subs.trend) * w.trend + (1-subs.rsi) * w.rsi + (subs.macd===0? w.macd:0) + (subs.recent===-1? w.recent:0);
+
+  // mode adjustment
+  if(params.mode==='agresivo'){ buyScore *= 1.12; sellScore *= 1.12; }
+  if(params.mode==='conservador'){ buyScore *= 0.9; sellScore *= 0.9; }
+
+  const decision = buyScore >= sellScore ? 'COMPRAR' : 'VENDER';
+  // confidence ~ normalized diff
+  const conf = clamp(Math.abs(buyScore - sellScore) / (buyScore + sellScore + 1e-9) * 100 * (1 + Math.abs(subs.rsi-0.5)), 10, 99);
+  let duration = 'Baja confianza';
+  if(conf > 75) duration = params.mode==='agresivo' ? '1-5 min' : params.mode==='equilibrado' ? '3-15 min' : '10-30 min';
+  else if(conf > 50) duration = '5-20 min';
+  return {decision, confidence: Math.round(conf), duration, debug:{subs, buyScore, sellScore}};
+}
+
+/* ---------------- MAIN: manejo de UI e integración ---------------- */
+let lastImage = null;
+document.getElementById('imgInput').addEventListener('change', (ev)=>{
+  const f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = ()=>{ lastImage = img; log("Imagen cargada. Listo para analizar."); URL.revokeObjectURL(url); };
+  img.onerror = ()=>{ log("Error al cargar la imagen."); URL.revokeObjectURL(url); };
+  img.src = url;
 });
+
+document.getElementById('autoEnhance').addEventListener('click', ()=>{
+  if(!lastImage) return log("Primero subí una imagen.");
+  // quick analyze with enhancement toggle
+  document.getElementById('timer').textContent = 'Procesando (auto-enhance)...';
+  setTimeout(()=>{
+    try{
+      const series = extractPriceSeriesFromImage(lastImage, 300, true);
+      displayResultFromSeries(series);
+    }catch(e){ log("Error: " + e.message); }
+    document.getElementById('timer').textContent = '';
+  }, 200);
+});
+
+document.getElementById('analyzeBtn').addEventListener('click', ()=>{
+  if(!lastImage) return log("Sube primero una imagen (input).");
+  document.getElementById('timer').textContent = 'Analizando imagen...';
+  setTimeout(()=>{
+    try{
+      const params = {
+        emaShort: Number(document.getElementById('emaShort').value) || 7,
+        emaLong: Number(document.getElementById('emaLong').value) || 21,
+        rsiP: Number(document.getElementById('rsiP').value) || 14,
+        mode: document.getElementById('mode').value || 'equilibrado'
+      };
+      const series = extractPriceSeriesFromImage(lastImage, 250, false);
+      displayResultFromSeries(series, params);
+    }catch(e){
+      log("Error analizando: " + e.message);
+    }
+    document.getElementById('timer').textContent = '';
+  }, 200);
+});
+
+function displayResultFromSeries(series, params){
+  if(!params) params = {emaShort:7, emaLong:21, rsiP:14, mode:'equilibrado'};
+  // ensure enough points
+  if(series.length < 10) { log("Serie muy corta. Imagen inválida o resolución baja."); return; }
+  const res = decideFromSeries(series, params);
+  // draw
+  drawSeries('chart', series, EMA(series.map(v=>({close:v})), params.emaShort, d=>d.close), EMA(series.map(v=>({close:v})), params.emaLong, d=>d.close), res.decision);
+  document.getElementById('summary').innerHTML = `Decisión: <b class="${res.decision==='COMPRAR'?'green':'red'}">${res.decision}</b> — ${res.confidence}% confianza — Duración: ${res.duration}`;
+  log(`Decisión: ${res.decision} (${res.confidence}% confianza)`);
+  // debug optional (small)
+  console.log("DEBUG:", res.debug);
+}
+
+/* ---------------- Inicial: dibujar placeholder ---------------- */
+(function initPlaceholder(){
+  const canvas=document.getElementById('chart');
+  const ctx=canvas.getContext('2d');
+  canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+  ctx.fillStyle = "#071022"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = "#94a3b8"; ctx.font = "16px Segoe UI"; ctx.fillText("Sube aquí una captura del gráfico y pulsa Analizar", 20, 40);
+})();
 </script>
 </body>
 </html>
