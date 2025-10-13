@@ -1,124 +1,347 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Indicador Visual + Mercado Pro</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Analizador Mejorado — Visual + Mercado</title>
 <style>
-body {
-  font-family: Arial;
-  text-align: center;
-  background: #0f172a;
-  color: white;
-  padding: 20px;
-}
-button {
-  background: #22c55e;
-  border: none;
-  padding: 10px 20px;
-  color: white;
-  border-radius: 10px;
-  margin: 10px;
-}
-img {
-  margin-top: 10px;
-  max-width: 90%;
-  border-radius: 10px;
-}
-.result {
-  font-size: 1.3em;
-  margin-top: 15px;
-}
+  :root{--bg:#0e1724;--card:#0f172a;--accent:#22c55e;--muted:#9aa3bf}
+  body{background:var(--bg);color:#e6eef8;font-family:Inter,Arial,Helvetica,sans-serif;margin:0;padding:22px}
+  .container{max-width:920px;margin:0 auto}
+  h1{color:var(--accent);margin:0 0 10px;font-size:22px;text-align:center}
+  .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:center}
+  input[type=file]{color:var(--muted)}
+  select, button{padding:10px 14px;border-radius:10px;border:0;font-weight:700}
+  button{background:var(--accent);color:#041025;cursor:pointer}
+  #preview{display:block;margin:12px auto;max-width:90%;border-radius:8px;border:1px solid #0b1220}
+  #result{margin-top:18px;text-align:center;font-size:1.05rem}
+  .muted{color:var(--muted);font-size:13px;text-align:center}
+  .detail{margin-top:10px;background:#0b1220;padding:12px;border-radius:10px;color:#dbe9ff;font-size:14px;white-space:pre-line}
 </style>
 </head>
 <body>
+  <div class="container">
+    <h1>Analizador Mejorado de Señales (Visual + Mercado)</h1>
+    <div class="controls">
+      <input id="upload" type="file" accept="image/*" />
+      <select id="symbol">
+        <option value="BTCUSDT">Bitcoin (BTC/USDT)</option>
+        <option value="ETHUSDT">Ethereum (ETH/USDT)</option>
+        <option value="BNBUSDT">BNB (BNB/USDT)</option>
+      </select>
+      <button id="analyzeBtn">Analizar Señales</button>
+      <button id="clearBtn" style="background:#6b7280">Limpiar</button>
+    </div>
 
-<h2>📊 Analizador de Señales Combinado</h2>
+    <img id="preview" src="" alt="Preview imagen (subí una captura)">
 
-<p>1️⃣ Sube una captura del gráfico</p>
-<input type="file" id="upload" accept="image/*">
-<br>
-<img id="preview" src="">
+    <div id="result">⚪ Esperando análisis...</div>
 
-<p>2️⃣ Elige una criptomoneda para verificar datos reales:</p>
-<select id="symbol">
-  <option value="BTCUSDT">Bitcoin (BTC/USDT)</option>
-  <option value="ETHUSDT">Ethereum (ETH/USDT)</option>
-  <option value="BNBUSDT">BNB (BNB/USDT)</option>
-</select>
-
-<br><button onclick="analyze()">Analizar Señales</button>
-
-<div id="result" class="result"></div>
+    <div class="detail" id="detailBox">Detalle del análisis aparecerá aquí.</div>
+    <div class="muted">Consejos: probá capturas limpias del área del gráfico (sin overlays extensos). Si usás TradingView, recortá el gráfico (sin menú lateral) para mejores resultados.</div>
+  </div>
 
 <script>
-const upload = document.getElementById("upload");
-const preview = document.getElementById("preview");
-upload.onchange = () => {
-  const file = upload.files[0];
-  if (file) {
-    const reader = new FileReader();
-    reader.onload = e => preview.src = e.target.result;
-    reader.readAsDataURL(file);
-  }
-};
+// ----------------- Utilidades -----------------
+function rgbToHsv(r,g,b){ r/=255; g/=255; b/=255; const max=Math.max(r,g,b), min=Math.min(r,g,b); const d=max-min; let h=0,s=0,v=max; if(d!==0){ s=d/max; switch(max){case r: h=((g-b)/d)%6; break; case g: h=(b-r)/d+2; break; default: h=(r-g)/d+4;} h*=60; if(h<0) h+=360;} return {h,s,v}; }
 
-async function analyze() {
-  const result = document.getElementById("result");
-  const symbol = document.getElementById("symbol").value;
-
-  result.innerHTML = "Analizando imagen y mercado... ⏳";
-
-  // --- Análisis visual ---
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  const img = document.getElementById("preview");
-  if (!img.src) return result.innerHTML = "⚠️ Sube una imagen antes de analizar.";
-
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  ctx.drawImage(img, 0, 0);
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-
-  let green = 0, red = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
-    if (g > r && g > b) green++;
-    if (r > g && r > b) red++;
-  }
-  const visualSignal = green > red ? "ALCISTA" : red > green ? "BAJISTA" : "NEUTRA";
-
-  // --- Datos reales (Binance) ---
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`);
-  const dataMarket = await res.json();
-  const closes = dataMarket.map(c => parseFloat(c[4]));
-
-  const smaShort = closes.slice(-7).reduce((a,b)=>a+b)/7;
-  const smaLong = closes.slice(-25).reduce((a,b)=>a+b)/25;
-  const rsi = (() => {
-    let gains=0, losses=0;
-    for (let i=1;i<15;i++){
-      const diff=closes[i]-closes[i-1];
-      if(diff>=0) gains+=diff; else losses-=diff;
+function smoothArray(arr, window=5){
+  const res = new Array(arr.length).fill(null);
+  for(let i=0;i<arr.length;i++){
+    let s=0,c=0;
+    for(let j=i-Math.floor(window/2); j<=i+Math.floor(window/2); j++){
+      if(j>=0 && j<arr.length && arr[j]!==null){ s+=arr[j]; c++; }
     }
-    const rs=gains/(losses||1);
-    return 100-100/(1+rs);
-  })();
-
-  // --- Fusión de señales ---
-  let final = "⚪ NEUTRO";
-  if (visualSignal === "ALCISTA" && smaShort > smaLong && rsi < 70) final = "🟢 COMPRA (coinciden señales alcistas)";
-  else if (visualSignal === "BAJISTA" && smaShort < smaLong && rsi > 50) final = "🔴 VENTA (coinciden señales bajistas)";
-
-  result.innerHTML = `
-    <b>${symbol}</b><br>
-    Señal visual: ${visualSignal}<br>
-    RSI: ${rsi.toFixed(1)}<br>
-    SMA7: ${smaShort.toFixed(1)} | SMA25: ${smaLong.toFixed(1)}<br><br>
-    <b>Resultado:</b> ${final}
-  `;
+    res[i] = c? s/c : null;
+  }
+  return res;
 }
-</script>
 
+// regresión lineal simple
+function linearRegression(x,y){
+  const n=x.length; if(n===0) return {m:0,b:0};
+  const mx = x.reduce((a,b)=>a+b,0)/n; const my = y.reduce((a,b)=>a+b,0)/n;
+  let num=0, den=0;
+  for(let i=0;i<n;i++){ num += (x[i]-mx)*(y[i]-my); den += (x[i]-mx)*(x[i]-mx); }
+  const m = den===0?0: num/den; const b = my - m*mx;
+  return {m,b};
+}
+
+// Convolución simple para detección de bordes (Sobel vertical y horizontal)
+function sobel(grayscale, w, h){
+  const gxKernel = [-1,0,1,-2,0,2,-1,0,1];
+  const gyKernel = [-1,-2,-1,0,0,0,1,2,1];
+  const gx = new Float32Array(w*h); const gy = new Float32Array(w*h);
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      let sumX=0,sumY=0;
+      let idx=0;
+      for(let ky=-1; ky<=1; ky++){
+        for(let kx=-1; kx<=1; kx++){
+          const px = x+kx, py = y+ky;
+          const v = grayscale[py*w + px];
+          sumX += v * gxKernel[idx];
+          sumY += v * gyKernel[idx];
+          idx++;
+        }
+      }
+      gx[y*w + x] = sumX; gy[y*w + x] = sumY;
+    }
+  }
+  // magnitude and angle
+  const mag = new Float32Array(w*h); const ang = new Float32Array(w*h);
+  for(let i=0;i<w*h;i++){ const mx_ = gx[i], my_ = gy[i]; mag[i] = Math.hypot(mx_,my_); ang[i] = Math.atan2(my_, mx_); }
+  return {mag,ang};
+}
+
+// ----------------- Análisis Visual Mejorado -----------------
+async function analyzeImageFile(file){
+  const preview = document.getElementById('preview');
+  preview.src = await fileToDataURL(file);
+  await new Promise(r => preview.onload = r);
+
+  // Downscale razonable para velocidad (mantener proporción)
+  const targetW = 640;
+  const ratio = preview.naturalWidth / preview.naturalHeight;
+  const w = Math.min(targetW, preview.naturalWidth);
+  const h = Math.round(w / ratio);
+
+  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(preview, 0, 0, w, h);
+
+  // Obtener datos
+  const imgData = ctx.getImageData(0,0,w,h);
+  const data = imgData.data;
+
+  // Preparar arrays
+  const grayscale = new Float32Array(w*h);
+  const brightYByCol = new Array(w).fill(null);
+  const persistence = new Uint16Array(h); // conteo horizontal
+  const colColorCounts = new Array(w).fill(0).map(()=>({green:0,red:0,neutral:0,bright:0}));
+
+  let totalColored = 0;
+
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const idx = (y*w + x)*4;
+      const r = data[idx], g = data[idx+1], b = data[idx+2];
+      const {h:hue,s:sat,v:val} = rgbToHsv(r,g,b);
+      const bright = (r + g + b) / (3*255); // 0..1
+      grayscale[y*w + x] = bright;
+
+      // ignorar bordes muy claros/etiquetas (alto brillo y baja saturación)
+      if(bright < 0.05 || (bright > 0.95 && sat < 0.15)) continue;
+
+      // clasificar color robusto con sat y umbrales adaptativos
+      if(sat > 0.25 && val > 0.15){
+        totalColored++;
+        // rojo
+        const isRed = (hue <= 25 || hue >= 340) && r > g && r > b;
+        // verde
+        const isGreen = hue >= 70 && hue <= 160 && g > r && g > b;
+        if(isRed) colColorCounts[x].red++;
+        else if(isGreen) colColorCounts[x].green++;
+        else colColorCounts[x].neutral++;
+
+        if(bright > 0.6){ // candidato a línea o cuerpo brillante
+          colColorCounts[x].bright++;
+          // track brightest y por columna
+          if(brightYByCol[x] === null || bright > imgData.data[(brightYByCol[x]*w + x)*4 + 0]/255){
+            brightYByCol[x] = y;
+          }
+          persistence[y]++; // candidato horizontal
+        }
+      }
+    }
+  }
+
+  // detectar MA por persistencia (línea horizontal persistente)
+  const persistenceArr = Array.from(persistence);
+  const maxPers = Math.max(...persistenceArr);
+  let maDetected = false, maY = null;
+  // buscar filas con un conteo significativo (ej > 1.2% del ancho o 6px)
+  const thresholdPers = Math.max(6, Math.round(w * 0.012));
+  for(let y=0;y<h;y++){ if(persistence[y] >= thresholdPers){ maDetected = true; maY = y; break; } }
+
+  // calcular pendiente de "precio" usando brightYByCol (suavizar antes)
+  const xs = [], ys = [];
+  for(let x=0;x<w;x++){
+    const y = brightYByCol[x];
+    if(y !== null) { xs.push(x); ys.push(y); }
+  }
+  const ysSmooth = smoothArray(ys, 9);
+  const lr = linearRegression(xs.slice(0, ysSmooth.length), ysSmooth.filter(v=>v!==null));
+  const slope = lr.m; // en px por columna; nota: y=0 arriba -> m < 0 = subir
+  // convertir slope relativo: normalizar por altura
+  const slopeNorm = slope / h;
+
+  // calcular "color dominance" global
+  const totalGreen = colColorCounts.reduce((s,c)=>s+c.green,0);
+  const totalRed = colColorCounts.reduce((s,c)=>s+c.red,0);
+  const totalNeutral = colColorCounts.reduce((s,c)=>s+c.neutral,0);
+  const visualGreenScore = (totalGreen - totalRed) / Math.max(1,totalGreen+totalRed+totalNeutral); // -1 .. 1
+
+  // edge detection para reforzar direccion (Sobel)
+  const sob = sobel(grayscale, w, h);
+  // promedio angulo en zonas de alto borde -> -pi..pi (negative indicates upward-left etc.)
+  let angSum = 0, angCount = 0;
+  for(let i=0;i<w*h;i++){
+    if(sob.mag[i] > 0.2){ angSum += sob.ang[i]; angCount++; }
+  }
+  const meanAng = angCount? angSum/angCount : 0;
+  // mapear a un factor: if angle points upward roughly -> bullish
+  const edgeFactor = Math.sin(meanAng); // -1..1 (approx)
+
+  // Visual score combinado (color + slope + edges)
+  // weight components: color 0.45, slope 0.35, edge 0.2
+  let visualScore = 0.45 * visualGreenScore + 0.35 * (-slopeNorm) + 0.2 * edgeFactor; // negative slopeNorm => price up -> bullish
+  // normalizar a [-1,1] (puede ya estar en rango cercano)
+  visualScore = Math.max(-1, Math.min(1, visualScore));
+
+  // confianza visual: basada en cantidad de pixels detectados y claridad de MA
+  const pixelConfidence = Math.min(1, totalColored / (w*h*0.02)); // si hay muchos pixeles coloreados => más confiable
+  const maConfidence = maDetected ? 0.2 : 0;
+  const visualConfidence = Math.min(1, pixelConfidence + maConfidence);
+
+  return {
+    visualScore, visualConfidence, slope, slopeNorm, totalGreen, totalRed, totalNeutral, maDetected, maY, w, h
+  };
+}
+
+// ----------------- Datos de Mercado (Binance) -----------------
+async function fetchMarketData(symbol){
+  try{
+    const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=200`);
+    if(!res.ok) throw new Error('Binance no respondió');
+    const rows = await res.json();
+    const closes = rows.map(r => parseFloat(r[4]));
+    return closes;
+  }catch(e){
+    console.warn('Error market data', e);
+    return null;
+  }
+}
+
+function calcSMA(arr, period){
+  if(arr.length < period) return null;
+  const last = arr.slice(-period);
+  return last.reduce((a,b)=>a+b,0)/period;
+}
+
+// RSI (Wilders smoothing, tradicional)
+function calcRSI(arr, period=14){
+  if(arr.length <= period) return null;
+  let gains=0, losses=0;
+  for(let i=1;i<=period;i++){
+    const diff = arr[i] - arr[i-1];
+    if(diff>0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains/period;
+  let avgLoss = losses/period;
+  for(let i=period+1;i<arr.length;i++){
+    const diff = arr[i] - arr[i-1];
+    if(diff>0){
+      avgGain = (avgGain*(period-1) + diff)/period;
+      avgLoss = (avgLoss*(period-1))/period;
+    } else {
+      avgGain = (avgGain*(period-1))/period;
+      avgLoss = (avgLoss*(period-1) - diff)/period;
+    }
+  }
+  const rs = avgGain / (avgLoss || 1e-9);
+  return 100 - (100 / (1 + rs));
+}
+
+// ----------------- Lógica final: combinación y decisión -----------------
+async function analyzeCombined(file, symbol){
+  const visual = await analyzeImageFile(file);
+  const closes = await fetchMarketData(symbol);
+
+  // si no hay datos de mercado, confiar más en visual
+  let marketScore = 0, marketConfidence = 0;
+  let rsi = null, smaShort=null, smaLong=null;
+  if(closes){
+    rsi = calcRSI(closes, 14);
+    smaShort = calcSMA(closes, 7);
+    smaLong = calcSMA(closes, 25);
+    // market score: basado en cruce SMA y RSI
+    let trendFactor = 0;
+    if(smaShort !== null && smaLong !== null){
+      trendFactor = smaShort > smaLong ? 0.8 : smaShort < smaLong ? -0.8 : 0;
+    }
+    let rsiFactor = 0;
+    if(rsi !== null){
+      if(rsi < 30) rsiFactor = 0.8;
+      else if(rsi > 70) rsiFactor = -0.8;
+      else rsiFactor = 0;
+    }
+    marketScore = (0.6*trendFactor + 0.4*rsiFactor); // -0.8..0.8
+    marketConfidence = ( (smaShort && smaLong)?0.6:0.2 ) + (rsi?0.4:0);
+    marketConfidence = Math.min(1, marketConfidence);
+  }
+
+  // combinar scores con pesos dinámicos según confianza
+  // pesoVisual = visualConfidence / (visualConfidence + marketConfidence) etc.
+  const vConf = visual.visualConfidence || 0.01;
+  const mConf = marketConfidence || 0.01;
+  const wVisual = vConf / (vConf + mConf);
+  const wMarket = mConf / (vConf + mConf);
+  const globalScore = visual.visualScore * wVisual + marketScore * wMarket; // -1..1
+  const confidence = Math.max(vConf, mConf) * (0.6 + 0.4*Math.abs(globalScore)); // escala confianza
+
+  // Decisión con umbrales moderados (no tan estrictos)
+  let decision = 'NEUTRO';
+  if(globalScore >= 0.22) decision = 'COMPRA';
+  else if(globalScore <= -0.22) decision = 'VENTA';
+
+  // Razones para mostrar
+  const reasons = [];
+  reasons.push(`Score visual: ${visual.visualScore.toFixed(3)} (conf ${Math.round(visual.visualConfidence*100)}%)`);
+  if(closes){
+    reasons.push(`Score mercado: ${marketScore.toFixed(3)} (conf ${Math.round(marketConfidence*100)}%)`);
+    if(rsi!==null) reasons.push(`RSI: ${rsi.toFixed(1)}`);
+    if(smaShort && smaLong) reasons.push(`SMA7:${smaShort.toFixed(2)} | SMA25:${smaLong.toFixed(2)}`);
+  } else reasons.push('No hay datos de mercado (offline).');
+  reasons.push(`Global score: ${globalScore.toFixed(3)} → Decisión: ${decision} (conf total ${Math.round(confidence*100)}%)`);
+
+  return {
+    decision, confidence: Math.round(confidence*100),
+    globalScore, visual, market:{rsi, smaShort, smaLong}, reasons
+  };
+}
+
+// ----------------- UI wiring -----------------
+const upload = document.getElementById('upload');
+const preview = document.getElementById('preview');
+upload.addEventListener('change', ()=> {
+  const f = upload.files[0];
+  if(f) fileToDataURL(f).then(url => preview.src=url);
+});
+
+document.getElementById('analyzeBtn').addEventListener('click', async ()=>{
+  const f = upload.files[0];
+  if(!f) return alert('Primero subí una captura.');
+  const symbol = document.getElementById('symbol').value;
+  document.getElementById('result').textContent = 'Analizando imagen y mercado... ⏳';
+  try{
+    const out = await analyzeCombined(f, symbol);
+    const rBox = document.getElementById('result');
+    rBox.innerHTML = `${symbol}<br>Resultado: ${ out.decision === 'COMPRA' ? '🟢 COMPRA' : out.decision === 'VENTA' ? '🔴 VENTA' : '⚪ NEUTRO' } — Confianza ${out.confidence}%`;
+    document.getElementById('detailBox').textContent = out.reasons.join('\n');
+  }catch(err){
+    console.error(err);
+    document.getElementById('result').textContent = 'Error durante el análisis. Revisá la consola.';
+  }
+});
+
+document.getElementById('clearBtn').addEventListener('click', ()=>{
+  upload.value = null; preview.src=''; document.getElementById('result').textContent='⚪ Esperando análisis...'; document.getElementById('detailBox').textContent='';
+});
+
+// helper
+function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=e=>res(e.target.result); fr.onerror=rej; fr.readAsDataURL(file); }); }
+
+</script>
 </body>
 </html>
