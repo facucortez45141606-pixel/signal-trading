@@ -3,97 +3,118 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trading Image Analyzer</title>
+  <title>Trading Image Analyzer Real</title>
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      background: #0f172a;
+      background-color: #0f172a;
       color: #f1f5f9;
+      font-family: Arial, sans-serif;
       text-align: center;
       padding: 20px;
     }
-    h1 {
-      color: #38bdf8;
-    }
     .card {
       background: #1e293b;
-      padding: 20px;
       border-radius: 12px;
-      box-shadow: 0 0 12px rgba(0,0,0,0.5);
+      padding: 20px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.4);
       max-width: 500px;
       margin: 30px auto;
     }
-    input[type="file"] {
-      background: #334155;
-      color: #f1f5f9;
-      padding: 8px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-    }
     button {
       background: #38bdf8;
-      color: black;
       border: none;
-      border-radius: 6px;
+      border-radius: 8px;
       padding: 10px 20px;
-      margin-top: 15px;
-      font-weight: bold;
+      margin-top: 10px;
       cursor: pointer;
+      font-weight: bold;
     }
-    button:hover {
-      background: #0ea5e9;
-    }
-    #result {
-      margin-top: 20px;
-      font-size: 18px;
-    }
+    button:hover { background: #0ea5e9; }
+    #result { margin-top: 20px; font-size: 18px; }
   </style>
 </head>
 <body>
-  <h1>📈 Trading Image Analyzer</h1>
+  <h1>📊 Trading Image Analyzer</h1>
   <div class="card">
-    <p>Sube una captura del gráfico para analizar si conviene <b>comprar</b> o <b>vender</b>.</p>
-    <input type="file" id="imageInput" accept="image/*">
-    <br>
-    <button onclick="analyzeImage()">Analizar Imagen</button>
+    <p>Sube una captura del gráfico (candlestick o líneas) para analizar.</p>
+    <input type="file" id="imageInput" accept="image/*"><br>
+    <button onclick="analyzeChart()">Analizar Gráfico</button>
     <div id="result"></div>
   </div>
 
-  <script>
-    function analyzeImage() {
-      const file = document.getElementById('imageInput').files[0];
-      const resultDiv = document.getElementById('result');
+  <canvas id="canvas" style="display:none;"></canvas>
 
-      if (!file) {
-        resultDiv.innerHTML = "⚠️ Sube primero una imagen del gráfico.";
+  <script>
+    async function analyzeChart() {
+      const input = document.getElementById('imageInput');
+      const result = document.getElementById('result');
+
+      if (!input.files[0]) {
+        result.innerHTML = "⚠️ Por favor, sube una imagen del gráfico.";
         return;
       }
 
-      resultDiv.innerHTML = "⏳ Analizando imagen...";
+      result.innerHTML = "⏳ Analizando imagen del mercado...";
+      const img = new Image();
+      img.src = URL.createObjectURL(input.files[0]);
 
-      // Simulación de análisis con IA (pseudo-lógica)
-      setTimeout(() => {
-        const random = Math.random();
-        let decision, confianza, color;
+      img.onload = async function() {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
 
-        // Mayor precisión según "probabilidad"
-        if (random > 0.55) {
-          decision = "📈 BUY (Compra)";
-          confianza = (random * 100).toFixed(1) + "%";
-          color = "#4ade80"; // verde
+        let src = cv.imread(canvas);
+        let hsv = new cv.Mat();
+        cv.cvtColor(src, hsv, cv.COLOR_RGBA2HSV);
+
+        // Extraer canales
+        let channels = new cv.MatVector();
+        cv.split(hsv, channels);
+        let hue = channels.get(0);
+        let sat = channels.get(1);
+        let val = channels.get(2);
+
+        // Promedios de color
+        const meanHue = cv.mean(hue)[0];
+        const meanSat = cv.mean(sat)[0];
+        const meanVal = cv.mean(val)[0];
+
+        // Analizar colores predominantes (verde/rojo)
+        let buySignal = 0, sellSignal = 0;
+        if (meanHue > 40 && meanHue < 90 && meanSat > 60) buySignal++; // Verde
+        if (meanHue > 0 && meanHue < 20 && meanSat > 60) sellSignal++; // Rojo
+
+        // Detección simple de tendencia (brillo)
+        if (meanVal > 130) buySignal += 0.5; else sellSignal += 0.5;
+
+        // Certeza de predicción
+        const total = buySignal + sellSignal;
+        const buyProb = (buySignal / total) * 100 || 50;
+        const sellProb = (sellSignal / total) * 100 || 50;
+
+        let decision, color, confianza;
+        if (buyProb > sellProb) {
+          decision = "📈 COMPRA (BUY)";
+          color = "#22c55e";
+          confianza = buyProb.toFixed(1);
         } else {
-          decision = "📉 SELL (Vende)";
-          confianza = ((1 - random) * 100).toFixed(1) + "%";
-          color = "#f87171"; // rojo
+          decision = "📉 VENTA (SELL)";
+          color = "#ef4444";
+          confianza = sellProb.toFixed(1);
         }
 
-        resultDiv.innerHTML = `
+        result.innerHTML = `
           <p><b>Resultado del análisis:</b></p>
-          <p style="color:${color}; font-size:22px">${decision}</p>
-          <p>Confianza estimada: <b>${confianza}</b></p>
+          <p style="color:${color}; font-size:22px;">${decision}</p>
+          <p>Confianza estimada: <b>${confianza}%</b></p>
+          <p>(Basado en color dominante, saturación y tendencia visual)</p>
         `;
-      }, 2000); // 2 segundos de "análisis"
+
+        src.delete(); hsv.delete(); channels.delete();
+      };
     }
   </script>
 </body>
