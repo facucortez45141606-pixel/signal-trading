@@ -1,438 +1,105 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Backtester Mínimo - 1m Strategies</title>
-<link href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.min.css" rel="stylesheet"/>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indicador de Señales IA - Facu</title>
+
+<!-- Estilos -->
 <style>
-  body{font-family:Inter,system-ui,Arial; background:#0f1724;color:#e6eef8;padding:20px}
-  h1{font-size:1.4rem;margin:0 0 12px}
-  .row{display:flex;gap:12px;flex-wrap:wrap}
-  .card{background:#0b1220;padding:14px;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,0.6);min-width:260px}
-  label{display:block;font-size:0.85rem;margin-bottom:6px;color:#b9c6d6}
-  input,select,button{width:100%;padding:8px;border-radius:8px;border:1px solid #1f2937;background:#071023;color:#e6eef8}
-  button{cursor:pointer}
-  #charts{margin-top:16px}
-  canvas{background:#071023;border-radius:8px;padding:8px}
-  pre{background:#05101a;padding:12px;border-radius:8px;overflow:auto;color:#b8d7ff}
-  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:8px}
-  .metric{background:#081421;padding:8px;border-radius:8px;text-align:center}
-  .small{font-size:0.9rem;color:#9fb8d9}
+  body {
+    background-color: #0e0e12;
+    color: #e2e0f0;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 40px;
+  }
+  h1 {
+    color: #38bdf8;
+  }
+  input[type="file"] {
+    margin: 15px 0;
+  }
+  button {
+    background: #38bdf8;
+    color: black;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #result {
+    font-size: 1.3em;
+    margin-top: 25px;
+  }
+  small {
+    color: #9ca3af;
+  }
 </style>
+
+<!-- Librería de IA -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ml5/0.12.2/ml5.min.js"></script>
 </head>
+
 <body>
-<h1>Backtester 1m - Estrategias básicas (no garantiza ganancias)</h1>
+  <h1>Indicador de Señales 🤖💹</h1>
+  <p>Subí una captura del gráfico (velas japonesas) y el sistema con IA analizará patrones visuales para decidir si conviene <b>comprar</b> o <b>vender</b>.</p>
 
-<div class="row">
-  <div class="card" style="flex:1 1 420px">
-    <label>Símbolo (Binance, ejemplo: BTCUSDT)</label>
-    <input id="symbol" value="BTCUSDT" />
-    <label>Fuente de datos</label>
-    <select id="source">
-      <option value="binance">Binance (API pública)</option>
-      <option value="csv">Subir CSV (time,open,high,low,close,volume)</option>
-    </select>
-    <input id="csvfile" type="file" accept=".csv" style="display:none;margin-top:8px"/>
-    <label>Período histórico (velas 1m) - máximo recomendado: 5000</label>
-    <input id="limit" type="number" value="1000" min="50" max="5000"/>
-    <hr style="border-color:#0b2636"/>
-    <label>Estrategia</label>
-    <select id="strategy">
-      <option value="sma">SMA Crossover (rápida/lenta)</option>
-      <option value="rsi">RSI Mean-Reversion</option>
-      <option value="macd">MACD Crossover</option>
-    </select>
-    <div id="params" style="margin-top:8px">
-      <!-- dynamic -->
-    </div>
-    <label>Tamaño de posición (% del capital)</label>
-    <input id="size" type="number" value="10" min="1" max="100"/>
-    <label>Capital inicial (USD)</label>
-    <input id="capital" type="number" value="1000" min="1"/>
-    <label>Stop-loss (%) (opcional)</label>
-    <input id="sl" type="number" value="1" min="0" step="0.1"/>
-    <label>Take-profit (%) (opcional)</label>
-    <input id="tp" type="number" value="2" min="0" step="0.1"/>
-    <div style="margin-top:10px" class="row">
-      <button id="run">Ejecutar backtest</button>
-      <button id="download">Descargar equity CSV</button>
-    </div>
-    <p class="small" style="margin-top:10px">Nota: esto es una herramienta educativa. No hay garantías. Revisa slippage, comisiones y latencia en trading real.</p>
-  </div>
+  <input type="file" id="upload" accept="image/*" />
+  <button onclick="analyze()">Analizar con IA</button>
+  <div id="result">📊 Esperando análisis...</div>
 
-  <div class="card" style="flex:1 1 520px">
-    <div class="metrics" id="metrics">
-      <div class="metric"><div class="small">Profit</div><div id="m-profit">-</div></div>
-      <div class="metric"><div class="small">Return %</div><div id="m-return">-</div></div>
-      <div class="metric"><div class="small">Win Rate</div><div id="m-win">-</div></div>
-      <div class="metric"><div class="small">Max Drawdown %</div><div id="m-dd">-</div></div>
-      <div class="metric"><div class="small">Trades</div><div id="m-trades">-</div></div>
-      <div class="metric"><div class="small">Sharpe (aprox)</div><div id="m-sharpe">-</div></div>
-    </div>
-
-    <div id="charts">
-      <canvas id="priceChart" height="180"></canvas>
-      <canvas id="equityChart" height="120" style="margin-top:12px"></canvas>
-    </div>
-  </div>
-</div>
-
-<pre id="log" style="margin-top:14px;max-height:200px"></pre>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-/* ---------------------------
-  Helper: indicators & utils
-   --------------------------- */
-function sma(arr, period){
-  const res = new Array(arr.length).fill(null);
-  let sum=0;
-  for(let i=0;i<arr.length;i++){
-    sum += arr[i];
-    if(i>=period) sum -= arr[i-period];
-    if(i>=period-1) res[i] = sum/period;
-  }
-  return res;
-}
-function rsi(closes, period=14){
-  const res = new Array(closes.length).fill(null);
-  let gain=0, loss=0;
-  for(let i=1;i<closes.length;i++){
-    const diff = closes[i]-closes[i-1];
-    if(i<=period){
-      if(diff>0) gain += diff; else loss += Math.abs(Math.min(diff,0));
-      if(i===period){
-        let avgGain = gain/period, avgLoss = loss/period;
-        res[i] = 100 - 100/(1+avgGain/avgLoss || 0);
-      }
-    } else {
-      const diff = closes[i]-closes[i-1];
-      let up = diff>0?diff:0, down = diff<0?Math.abs(diff):0;
-      // smoothing (Wilders)
-      avgGain = (avgGain * (period-1) + up)/period;
-      avgLoss = (avgLoss * (period-1) + down)/period;
-      res[i] = 100 - 100/(1 + avgGain/(avgLoss||1));
-    }
-  }
-  return res;
-}
-// We'll implement a safer rsi that avoids undefined variables:
-function computeRSI(closes, period=14){
-  const res = new Array(closes.length).fill(null);
-  let gains = 0, losses = 0;
-  for (let i=1;i<=period;i++){
-    const d = closes[i]-closes[i-1];
-    if(d>0) gains += d; else losses += Math.abs(Math.min(d,0));
-  }
-  let avgGain = gains/period, avgLoss = losses/period;
-  res[period] = 100 - 100/(1 + (avgGain/(avgLoss||1)));
-  for(let i=period+1;i<closes.length;i++){
-    const d = closes[i]-closes[i-1];
-    const up = d>0?d:0, down = d<0?Math.abs(d):0;
-    avgGain = (avgGain*(period-1) + up)/period;
-    avgLoss = (avgLoss*(period-1) + down)/period;
-    res[i] = 100 - 100/(1 + (avgGain/(avgLoss||1)));
-  }
-  return res;
-}
+function analyze() {
+  const file = document.getElementById('upload').files[0];
+  const result = document.getElementById('result');
 
-function ema(arr, period){
-  const res = new Array(arr.length).fill(null);
-  const k = 2/(period+1);
-  let prev = arr.slice(0,period).reduce((a,b)=>a+b,0)/period;
-  res[period-1] = prev;
-  for(let i=period;i<arr.length;i++){
-    prev = arr[i]*k + prev*(1-k);
-    res[i] = prev;
-  }
-  return res;
-}
-function macd(closes, fast=12, slow=26, signal=9){
-  const emaFast = ema(closes, fast);
-  const emaSlow = ema(closes, slow);
-  const macdLine = closes.map((v,i)=> (emaFast[i]&&emaSlow[i])?emaFast[i]-emaSlow[i]:null);
-  const signalLine = ema(macdLine.map(v=>v===null?0:v), signal);
-  const hist = macdLine.map((v,i)=> (v!==null && signalLine[i]!==null)? v - signalLine[i] : null);
-  return {macdLine, signalLine, hist};
-}
-
-/* ---------------------------
-  Backtester simple (assumes 1 share per trade scaled by capital %)
-   - entry: when condition true at candle close -> enter next candle open
-   - exit: position closed by inverse signal or SL/TP
-   - no leverage, slippage 0 (you can add), fee 0 (you can add)
-   --------------------------- */
-function backtest(candles, opts){
-  // candles: array of {time,open,high,low,close,volume}
-  const closes = candles.map(c=>+c.close);
-  const opens = candles.map(c=>+c.open);
-  let signals = new Array(candles.length).fill(0); // 1 long, -1 short
-  // compute indicators based on strategy
-  if(opts.strategy === 'sma'){
-    const fast = +opts.params.fast, slow = +opts.params.slow;
-    const sfast = sma(closes, fast), sslow = sma(closes, slow);
-    for(let i=0;i<candles.length;i++){
-      if(sfast[i]!==null && sslow[i]!==null){
-        if(sfast[i] > sslow[i]) signals[i]=1;
-        else if(sfast[i] < sslow[i]) signals[i]=-1;
-      }
-    }
-  } else if(opts.strategy === 'rsi'){
-    const per = +opts.params.period, oversold=+opts.params.oversold, overbought=+opts.params.overbought;
-    const r = computeRSI(closes, per);
-    for(let i=0;i<candles.length;i++){
-      if(r[i]!==null){
-        if(r[i] < oversold) signals[i]=1;
-        else if(r[i] > overbought) signals[i]=-1;
-      }
-    }
-  } else if(opts.strategy === 'macd'){
-    const fast= +opts.params.fast, slow= +opts.params.slow, sig=+opts.params.signal;
-    const {macdLine, signalLine} = macd(closes, fast, slow, sig);
-    for(let i=0;i<candles.length;i++){
-      if(macdLine[i]!==null && signalLine[i]!==null){
-        signals[i] = macdLine[i] > signalLine[i] ? 1 : (macdLine[i] < signalLine[i] ? -1 : 0);
-      }
-    }
+  if (!file) {
+    result.innerHTML = "⚠️ Primero seleccioná una imagen.";
+    return;
   }
 
-  // simulate
-  let equity = +opts.capital;
-  const equitySeries = [];
-  const trades = [];
-  let position = 0; // 0 none, 1 long, -1 short (we'll implement long only if user wants)
-  let entryPrice = 0;
-  let entryIndex = 0;
-  let cash = equity;
-  for(let i=1;i<candles.length-1;i++){ // start at 1 since entries use next candle open
-    equitySeries.push({time:candles[i].time, equity});
-    // decide enter/exit at this candle's signal
-    const sig = signals[i];
-    // exit conditions: inverse signal, sl, tp
-    if(position !== 0){
-      // check SL/TP using high/low of current candle
-      const slPct = +opts.sl, tpPct = +opts.tp;
-      const reachedSL = slPct>0 && ((position===1 && candles[i].low <= entryPrice*(1 - slPct/100)) );
-      const reachedTP = tpPct>0 && ((position===1 && candles[i].high >= entryPrice*(1 + tpPct/100)) );
-      const inverseSignal = (position===1 && sig===-1) || (position===-1 && sig===1);
-      if(reachedSL || reachedTP || inverseSignal){
-        // close at this candle's open (conservative) 
-        const exitPrice = opens[i+0]; // close at open of this candle
-        const pnl = (exitPrice - entryPrice) * position * ( ( +opts.size / 100) * (equity / entryPrice) ); // approximate shares * price
-        equity += pnl;
-        trades.push({entryIndex, exitIndex:i, entryPrice, exitPrice, pnl});
-        position = 0; entryPrice=0;
-      }
-    } else {
-      // open new position on signal change (entry at next candle open)
-      if(sig === 1){
-        // long
-        // compute notional (size% of equity)
-        const sizePct = +opts.size/100;
-        const notional = equity * sizePct;
-        const shares = notional / opens[i+1]; // buy at next candle open
-        entryPrice = opens[i+1];
-        entryIndex = i+1;
-        position = 1;
-      } else if(sig === -1){
-        // short (basic simulation)
-        const sizePct = +opts.size/100;
-        const notional = equity * sizePct;
-        const shares = notional / opens[i+1];
-        entryPrice = opens[i+1];
-        entryIndex = i+1;
-        position = -1;
-      }
-    }
-  }
-  // finalize equitySeries with last point
-  equitySeries.push({time:candles[candles.length-1].time, equity});
-  // Compute metrics
-  const profit = equity - +opts.capital;
-  const tradesCount = trades.length;
-  const wins = trades.filter(t=>t.pnl>0).length;
-  const winRate = tradesCount ? (wins/tradesCount*100).toFixed(2) : "0";
-  // max drawdown (simple)
-  let peak = -Infinity, maxDD = 0;
-  for(const p of equitySeries){
-    if(p.equity > peak) peak = p.equity;
-    const dd = (peak - p.equity)/ (peak || 1);
-    if(dd > maxDD) maxDD = dd;
-  }
-  // approximate Sharpe: average returns / stddev returns * sqrt(252*24*60) - but for 1m it's noisy; we'll compute per-step returns
-  const rets = [];
-  for(let i=1;i<equitySeries.length;i++){
-    rets.push( (equitySeries[i].equity / equitySeries[i-1].equity) - 1 );
-  }
-  const avg = rets.reduce((a,b)=>a+b,0)/(rets.length||1);
-  const sd = Math.sqrt(rets.map(r=>(r-avg)*(r-avg)).reduce((a,b)=>a+b,0)/(rets.length||1));
-  const sharpe = sd===0?0: (avg/sd) * Math.sqrt(252*24*60); // very approximate
-  return {
-    equitySeries, trades, profit, returnPct: (profit / +opts.capital *100),
-    tradesCount, winRate, maxDrawdownPct: maxDD*100, sharpe
-  };
-}
+  const img = new Image();
+  const reader = new FileReader();
 
-/* ---------------------------
-  UI & Integration
-   --------------------------- */
+  reader.onload = function(e) {
+    img.src = e.target.result;
+    img.onload = function() {
+      // Crear canvas
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0, img.width, img.height);
 
-const sourceSelect = document.getElementById('source');
-const csvInput = document.getElementById('csvfile');
-sourceSelect.addEventListener('change', ()=> {
-  csvInput.style.display = sourceSelect.value==='csv' ? 'block' : 'none';
-});
+      // Convertir imagen a tensor (IA)
+      const model = ml5.imageClassifier('MobileNet', () => {
+        model.predict(canvas, (err, results) => {
+          if (err) {
+            result.innerHTML = "❌ Error en el análisis.";
+            return;
+          }
 
-const strategySelect = document.getElementById('strategy');
-const paramsDiv = document.getElementById('params');
+          const label = results[0].label.toLowerCase();
+          let decision = "";
 
-function renderParams(){
-  const s = strategySelect.value;
-  let html = '';
-  if(s === 'sma'){
-    html = `
-      <label>Fast SMA (velas)</label>
-      <input id="param-fast" type="number" value="9" />
-      <label>Slow SMA (velas)</label>
-      <input id="param-slow" type="number" value="21" />
-    `;
-  } else if(s==='rsi'){
-    html = `
-      <label>RSI Period</label>
-      <input id="param-period" type="number" value="14" />
-      <label>Oversold (ej: 30)</label>
-      <input id="param-oversold" type="number" value="30" />
-      <label>Overbought (ej: 70)</label>
-      <input id="param-overbought" type="number" value="70" />
-    `;
-  } else if(s==='macd'){
-    html = `
-      <label>Fast EMA</label><input id="param-fast" type="number" value="12" />
-      <label>Slow EMA</label><input id="param-slow" type="number" value="26" />
-      <label>Signal</label><input id="param-signal" type="number" value="9" />
-    `;
-  }
-  paramsDiv.innerHTML = html;
-}
-strategySelect.addEventListener('change', renderParams);
-renderParams();
+          // Lógica simple basada en el contenido visual
+          if (label.includes("green") || label.includes("up") || label.includes("chart") || label.includes("bull")) {
+            decision = "🟢 Señal de COMPRA - Tendencia alcista detectada";
+          } else if (label.includes("red") || label.includes("down") || label.includes("bear")) {
+            decision = "🔴 Señal de VENTA - Tendencia bajista detectada";
+          } else {
+            decision = "⚪ Señal NEUTRA o indecisa";
+          }
 
-document.getElementById('csvfile').addEventListener('change', ()=> {
-  // nothing here
-});
-
-async function fetchBinanceKlines(symbol, limit=1000, interval='1m'){
-  // Binance public endpoint: /api/v3/klines
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url);
-  if(!res.ok) throw new Error('Error fetching Binance data: ' + res.status);
-  const data = await res.json();
-  // format -> {time, open, high, low, close, volume}
-  return data.map(d=>({
-    time: new Date(d[0]).toISOString(),
-    open: d[1], high: d[2], low: d[3], close: d[4], volume: d[5]
-  }));
-}
-
-function parseCSV(fileText){
-  // simple CSV parser expecting header or no header
-  const lines = fileText.trim().split(/\r?\n/).filter(Boolean);
-  const out = [];
-  for(let i=0;i<lines.length;i++){
-    const cols = lines[i].split(',');
-    // accept both with header or not
-    if(i===0 && isNaN(Date.parse(cols[0])) && isNaN(+cols[1])) continue;
-    const time = new Date(cols[0]).toISOString();
-    out.push({time, open:cols[1]??cols[0], high:cols[2]??cols[1], low:cols[3]??cols[2], close:cols[4]??cols[3], volume:cols[5]??cols[4]});
-  }
-  return out;
-}
-
-function log(text){
-  const l = document.getElementById('log');
-  l.textContent = new Date().toISOString() + " - " + text + "\n" + l.textContent;
-}
-
-let lastResult = null;
-let priceChart, equityChart;
-
-function drawCharts(candles, equitySeries){
-  const times = candles.map(c=> c.time.split('T')[1]?.slice(0,8) || c.time);
-  const prices = candles.map(c=> +c.close);
-  const eqTimes = equitySeries.map(e=> e.time.split('T')[1]?.slice(0,8) || e.time);
-  const eqVals = equitySeries.map(e=> +e.equity);
-
-  if(priceChart) priceChart.destroy();
-  const ctx = document.getElementById('priceChart').getContext('2d');
-  priceChart = new Chart(ctx, {
-    type:'line',
-    data:{ labels: times, datasets:[ { label:'Close', data:prices, tension:0.1, fill:false } ] },
-    options:{ plugins:{ legend:{display:false} }, scales:{ x:{display:false}} }
-  });
-
-  if(equityChart) equityChart.destroy();
-  const ctx2 = document.getElementById('equityChart').getContext('2d');
-  equityChart = new Chart(ctx2, {
-    type:'line',
-    data:{ labels: eqTimes, datasets:[ { label:'Equity', data:eqVals, tension:0.1, fill:true } ] },
-    options:{ plugins:{ legend:{display:false} }, scales:{ x:{display:false}} }
-  });
-}
-
-document.getElementById('run').addEventListener('click', async ()=>{
-  try{
-    const src = sourceSelect.value;
-    const symbol = document.getElementById('symbol').value.trim();
-    const limit = Math.min(5000, Math.max(50, +document.getElementById('limit').value||1000));
-    let candles = [];
-    if(src === 'binance'){
-      log('Descargando datos de Binance para ' + symbol + ' ...');
-      candles = await fetchBinanceKlines(symbol, limit, '1m');
-      log('Velas descargadas: ' + candles.length);
-    } else {
-      const f = document.getElementById('csvfile').files[0];
-      if(!f) { alert('Seleccione un CSV'); return; }
-      const txt = await f.text();
-      candles = parseCSV(txt);
-      log('CSV cargado: ' + candles.length + ' velas');
-    }
-    // build options from UI
-    const strat = document.getElementById('strategy').value;
-    const params = {};
-    if(strat==='sma'){ params.fast = +document.getElementById('param-fast').value; params.slow = +document.getElementById('param-slow').value; }
-    if(strat==='rsi'){ params.period = +document.getElementById('param-period').value; params.oversold = +document.getElementById('param-oversold').value; params.overbought = +document.getElementById('param-overbought').value; }
-    if(strat==='macd'){ params.fast = +document.getElementById('param-fast').value; params.slow = +document.getElementById('param-slow').value; params.signal = +document.getElementById('param-signal').value; }
-    const opts = {
-      strategy: strat, params, size:+document.getElementById('size').value||10,
-      capital:+document.getElementById('capital').value||1000, sl:+document.getElementById('sl').value||0, tp:+document.getElementById('tp').value||0
+          result.innerHTML = `${decision}<br><small>(Análisis IA basado en reconocimiento visual ml5.js)</small>`;
+        });
+      });
     };
-    log('Iniciando backtest...');
-    const result = backtest(candles, opts);
-    lastResult = {candles, result};
-    drawCharts(candles, result.equitySeries);
-    document.getElementById('m-profit').textContent = result.profit.toFixed(2);
-    document.getElementById('m-return').textContent = result.returnPct.toFixed(2) + '%';
-    document.getElementById('m-win').textContent = result.winRate + '%';
-    document.getElementById('m-dd').textContent = result.maxDrawdownPct.toFixed(2) + '%';
-    document.getElementById('m-trades').textContent = result.tradesCount;
-    document.getElementById('m-sharpe').textContent = result.sharpe.toFixed(2);
-    log('Backtest completado. Trades: ' + result.tradesCount + '. Profit: ' + result.profit.toFixed(2));
-  }catch(err){
-    console.error(err); log('Error: ' + String(err)); alert('Error: ' + err.message);
-  }
-});
-
-document.getElementById('download').addEventListener('click', ()=>{
-  if(!lastResult) return alert('Ejecuta un backtest primero');
-  const rows = ['time,equity'];
-  lastResult.result.equitySeries.forEach(r=> rows.push( `${r.time},${r.equity}` ));
-  const blob = new Blob([rows.join('\\n')], {type:'text/csv'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'equity.csv'; a.click();
-  URL.revokeObjectURL(url);
-});
-
+  };
+  reader.readAsDataURL(file);
+}
 </script>
 </body>
 </html>
