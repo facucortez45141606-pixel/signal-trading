@@ -1,67 +1,94 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Indicador de Señales - Facu</title>
-  <style>
-    body {
-      background: #0f172a;
-      color: #e2e8f0;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-    h1 {
-      color: #38bdf8;
-    }
-    .box {
-      background: #1e293b;
-      padding: 25px;
-      border-radius: 12px;
-      display: inline-block;
-      margin-top: 30px;
-    }
-    input[type=file] {
-      margin: 15px 0;
-    }
-    button {
-      background: #38bdf8;
-      border: none;
-      color: black;
-      padding: 10px 20px;
-      border-radius: 10px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    #result {
-      font-size: 1.4em;
-      margin-top: 25px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indicador de Señales - Facu</title>
+<style>
+  body {
+    background-color: #0e0e12;
+    color: #e2e0f0;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 40px;
+  }
+  h1 {
+    color: #38bdf8;
+  }
+  input[type="file"] {
+    margin: 15px 0;
+  }
+  button {
+    background: #38bdf8;
+    color: black;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #result {
+    font-size: 1.4em;
+    margin-top: 25px;
+  }
+</style>
 </head>
 <body>
-  <h1>Indicador de Señales 📈</h1>
-  <p>Subí una captura del gráfico y el sistema te dirá si es momento de <b>comprar</b> o <b>vender</b>.</p>
-  <div class="box">
-    <input type="file" id="upload" accept="image/*" />
-    <button onclick="analyze()">Analizar Señal</button>
-    <div id="result"></div>
-  </div>
+  <h1>Indicador de Señales 💹</h1>
+  <p>Subí una captura del gráfico y el sistema analizará los colores dominantes para decidir si conviene <b>comprar</b> o <b>vender</b>.</p>
 
-  <script>
-    function analyze() {
-      const file = document.getElementById('upload').files[0];
-      const result = document.getElementById('result');
-      if (!file) {
-        result.innerHTML = "⚠️ Primero seleccioná una imagen.";
-        return;
+  <input type="file" id="upload" accept="image/*" />
+  <button onclick="analyze()">Analizar Señal</button>
+  <div id="result">📈 Esperando análisis...</div>
+
+<script>
+function analyze() {
+  const file = document.getElementById('upload').files[0];
+  const result = document.getElementById('result');
+  if (!file) {
+    result.innerHTML = "⚠️ Primero seleccioná una imagen.";
+    return;
+  }
+
+  const img = new Image();
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+    img.src = e.target.result;
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+
+      const data = ctx.getImageData(0, 0, img.width, img.height).data;
+      let greenPixels = 0;
+      let redPixels = 0;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        if (g > r && g > b) greenPixels++;
+        if (r > g && r > b) redPixels++;
       }
-      // Simulación de análisis (MVP)
-      const signals = ["✅ Señal de COMPRA", "❌ Señal de VENTA", "⚖️ Neutra"];
-      const pick = signals[Math.floor(Math.random() * signals.length)];
-      result.innerHTML = pick;
-    }
-  </script>
+
+      let decision = "";
+      if (greenPixels > redPixels * 1.2) {
+        decision = "🟢 Señal de COMPRA - Tendencia alcista detectada";
+      } else if (redPixels > greenPixels * 1.2) {
+        decision = "🔴 Señal de VENTA - Tendencia bajista detectada";
+      } else {
+        decision = "⚪ Señal NEUTRA - Mercado lateral o indefinido";
+      }
+
+      result.innerHTML = decision + `<br><small>(Análisis basado en dominancia de color)</small>`;
+    };
+  };
+
+  reader.readAsDataURL(file);
+}
+</script>
 </body>
 </html>
