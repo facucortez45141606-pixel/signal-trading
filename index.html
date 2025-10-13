@@ -1,14 +1,15 @@
-<!DOCTYPE html><html lang="es">
+<!DOCTYPE html>
+<html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trading Image Analyzer Real (Delay 10s)</title>
-  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trading Image Analyzer — IA Simulada</title>
+  <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
   <style>
     body {
       background-color: #0f172a;
-      color: #f1f5f9;
-      font-family: Arial, sans-serif;
+      color: #e2e8f0;
+      font-family: Inter, Arial, sans-serif;
       text-align: center;
       padding: 20px;
     }
@@ -16,43 +17,71 @@
       background: #1e293b;
       border-radius: 12px;
       padding: 20px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.4);
-      max-width: 500px;
-      margin: 30px auto;
+      box-shadow: 0 0 20px rgba(0,0,0,0.4);
+      max-width: 600px;
+      margin: 20px auto;
     }
     button {
       background: #38bdf8;
       border: none;
       border-radius: 8px;
       padding: 10px 20px;
-      margin-top: 10px;
-      cursor: pointer;
       font-weight: bold;
+      cursor: pointer;
+      color: #0f172a;
     }
     button:hover { background: #0ea5e9; }
     #result { margin-top: 20px; font-size: 18px; }
+    #progress {
+      height: 10px;
+      background: #1e293b;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 15px;
+    }
+    #bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #22c55e, #38bdf8);
+      transition: width 0.5s ease;
+    }
   </style>
 </head>
 <body>
-  <h1>📊 Trading Image Analyzer</h1>
+  <h1>📊 Trading Image Analyzer — IA Simulada</h1>
   <div class="card">
-    <p>Sube una captura del gráfico (candlestick o líneas) para analizar.</p>
-    <input type="file" id="imageInput" accept="image/*"><br>
-    <button onclick="analyzeChart()">Analizar Gráfico</button>
+    <p>Sube una captura del gráfico (velas rojas y verdes).</p>
+    <input type="file" id="imageInput" accept="image/*"><br><br>
+    <button onclick="startAnalysis()">Analizar</button>
+    <div id="progress"><div id="bar"></div></div>
     <div id="result"></div>
-  </div><canvas id="canvas" style="display:none;"></canvas>
+  </div>
+
+  <canvas id="canvas" style="display:none;"></canvas>
 
   <script>
-    async function analyzeChart() {
+    async function startAnalysis() {
       const input = document.getElementById('imageInput');
       const result = document.getElementById('result');
+      const bar = document.getElementById('bar');
 
       if (!input.files[0]) {
-        result.innerHTML = "⚠️ Por favor, sube una imagen del gráfico.";
+        result.innerHTML = "⚠️ Por favor, sube una imagen primero.";
         return;
       }
 
-      result.innerHTML = "⏳ Analizando imagen del mercado... (10 segundos)";
+      result.innerHTML = "⏳ Analizando imagen... (15 segundos)";
+      bar.style.width = "0%";
+
+      // Simulación de progreso en tiempo real
+      let progress = 0;
+      const interval = setInterval(() => {
+        progress += 1;
+        bar.style.width = progress + "%";
+        if (progress >= 100) clearInterval(interval);
+      }, 150); // 100 pasos en 15 segundos (100 * 150ms = 15s)
+
+      // Procesamiento de imagen (simulado)
       const img = new Image();
       img.src = URL.createObjectURL(input.files[0]);
 
@@ -63,58 +92,46 @@
         canvas.height = img.height;
         ctx.drawImage(img, 0, 0);
 
-        let src = cv.imread(canvas);
-        let hsv = new cv.Mat();
-        cv.cvtColor(src, hsv, cv.COLOR_RGBA2HSV);
+        // Usamos un pequeño retardo para simular análisis profundo (15s)
+        setTimeout(async () => {
+          // --- IA Simulada (Análisis de color + lógica inteligente) ---
+          let src = cv.imread(canvas);
+          let hsv = new cv.Mat();
+          cv.cvtColor(src, hsv, cv.COLOR_RGBA2HSV);
 
-        // Extraer canales
-        let channels = new cv.MatVector();
-        cv.split(hsv, channels);
-        let hue = channels.get(0);
-        let sat = channels.get(1);
-        let val = channels.get(2);
+          let channels = new cv.MatVector();
+          cv.split(hsv, channels);
+          let hue = channels.get(0), sat = channels.get(1), val = channels.get(2);
 
-        // Promedios de color
-        const meanHue = cv.mean(hue)[0];
-        const meanSat = cv.mean(sat)[0];
-        const meanVal = cv.mean(val)[0];
+          const meanHue = cv.mean(hue)[0];
+          const meanSat = cv.mean(sat)[0];
+          const meanVal = cv.mean(val)[0];
 
-        // Esperar 10 segundos simulando análisis profundo
-        await new Promise(resolve => setTimeout(resolve, 10000));
+          // Señales básicas
+          let greenPower = (meanHue > 40 && meanHue < 90) ? meanSat : 0;
+          let redPower = ((meanHue < 20 || meanHue > 160)) ? meanSat : 0;
+          let brightness = meanVal;
 
-        // Analizar colores predominantes (verde/rojo)
-        let buySignal = 0, sellSignal = 0;
-        if (meanHue > 40 && meanHue < 90 && meanSat > 60) buySignal++; // Verde
-        if (meanHue > 0 && meanHue < 20 && meanSat > 60) sellSignal++; // Rojo
+          // IA simulada: mezcla señales con “razonamiento”
+          const score = (greenPower - redPower) * 0.5 + (brightness - 128) * 0.1;
+          const confidence = Math.min(99, Math.abs(score / 2) + 50);
+          const decision = score > 0 ? "📈 COMPRA (BUY)" : "📉 VENTA (SELL)";
+          const color = score > 0 ? "#22c55e" : "#ef4444";
 
-        // Detección simple de tendencia (brillo)
-        if (meanVal > 130) buySignal += 0.5; else sellSignal += 0.5;
+          src.delete(); hsv.delete(); channels.delete();
 
-        // Certeza de predicción
-        const total = buySignal + sellSignal;
-        const buyProb = (buySignal / total) * 100 || 50;
-        const sellProb = (sellSignal / total) * 100 || 50;
-
-        let decision, color, confianza;
-        if (buyProb > sellProb) {
-          decision = "📈 COMPRA (BUY)";
-          color = "#22c55e";
-          confianza = buyProb.toFixed(1);
-        } else {
-          decision = "📉 VENTA (SELL)";
-          color = "#ef4444";
-          confianza = sellProb.toFixed(1);
-        }
-
-        result.innerHTML = `
-          <p><b>Resultado del análisis:</b></p>
-          <p style="color:${color}; font-size:22px;">${decision}</p>
-          <p>Confianza estimada: <b>${confianza}%</b></p>
-          <p>(Basado en color dominante, saturación y tendencia visual)</p>
-        `;
-
-        src.delete(); hsv.delete(); channels.delete();
+          // Mostrar resultado 1 segundo después
+          setTimeout(() => {
+            result.innerHTML = `
+              <p><b>Resultado final:</b></p>
+              <p style="color:${color}; font-size:24px;">${decision}</p>
+              <p>Confianza estimada: <b>${confidence.toFixed(1)}%</b></p>
+              <p style="color:#94a3b8">(Análisis IA simulada basado en color y brillo)</p>
+            `;
+          }, 1000);
+        }, 15000); // 15 segundos exactos
       };
     }
-  </script></body>
+  </script>
+</body>
 </html>
