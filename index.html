@@ -1,239 +1,95 @@
-<!DOCTYPE html><html lang="es">
+<!DOCTYPE html>
+<html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Indicador de Señales - Facu (Pro)</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indicador Pro de Trading</title>
 <style>
-  :root{--bg:#0e0e12;--card:#121217;--accent:#38bdf8;--muted:#bfc0d8}
-  *{box-sizing:border-box}
-  body{background:var(--bg);color:#e6e7fb;font-family:Inter,Arial,Helvetica,sans-serif;margin:0;padding:28px;}
-  .container{max-width:920px;margin:0 auto}
-  header{display:flex;gap:16px;align-items:center;justify-content:space-between}
-  h1{color:var(--accent);margin:0;font-size:22px}
-  p.small{color:var(--muted);margin:6px 0 18px}
-  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);padding:18px;border-radius:12px;margin-top:14px}
-  .controls{display:flex;gap:12px;align-items:center}
-  input[type=file]{color:var(--muted)}
-  button{background:var(--accent);color:#020617;border:none;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
-  #result{margin-top:16px;font-size:1.05rem}
-  .bars{display:flex;gap:8px;margin-top:10px}
-  .bar{flex:1;height:14px;background:#222;border-radius:8px;overflow:hidden}
-  .bar > .fill{height:100%;width:0;transition:width 450ms ease}
-  .log{margin-top:12px;color:var(--muted);font-size:13px;max-height:160px;overflow:auto;padding:8px;background:#09090b;border-radius:8px}
-  canvas{display:none}
-  .strategy{margin-top:12px;padding:12px;border-radius:10px;background:#07070a;color:#dfe3ff}
-  .muted{color:var(--muted);font-size:13px}
-  footer{margin-top:18px;color:var(--muted);font-size:12px}
+body {
+  font-family: Arial;
+  text-align: center;
+  background: #0f172a;
+  color: white;
+  padding: 20px;
+}
+button {
+  background: #22c55e;
+  border: none;
+  padding: 10px 20px;
+  color: white;
+  border-radius: 10px;
+  margin: 10px;
+}
+.result {
+  font-size: 1.5em;
+  margin-top: 20px;
+}
 </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div>
-        <h1>Indicador de Señales 💹 — Pro</h1>
-        <p class="small">Subí una captura del gráfico y el sistema hará un análisis por color + tendencia visual. No es azar: detecta color dominante, pendiente de precio y relación con una línea tipo "media" detectada en la imagen.</p>
-      </div>
-      <div class="muted">Facu — Versión Pro</div>
-    </header><div class="card">
-  <div class="controls">
-    <input id="upload" type="file" accept="image/*" />
-    <button id="analyzeBtn">Analizar Señal</button>
-    <button id="clearBtn" style="background:#6b7280">Limpiar</button>
-  </div>
+<h2>📈 Analizador de Señales de Trading</h2>
+<p>Selecciona una criptomoneda para analizar su tendencia actual.</p>
 
-  <div id="result">📈 Esperando análisis...</div>
+<select id="symbol">
+  <option value="BTCUSDT">Bitcoin (BTC/USDT)</option>
+  <option value="ETHUSDT">Ethereum (ETH/USDT)</option>
+  <option value="BNBUSDT">BNB (BNB/USDT)</option>
+</select>
+<br>
+<button onclick="analyze()">Analizar Mercado</button>
 
-  <div class="bars" style="margin-top:8px">
-    <div class="bar"><div id="greenBar" class="fill" style="background:linear-gradient(90deg,#0ea5a1,#22c55e)"></div></div>
-    <div class="bar"><div id="redBar" class="fill" style="background:linear-gradient(90deg,#ef4444,#f97316)"></div></div>
-    <div class="bar"><div id="neutralBar" class="fill" style="background:linear-gradient(90deg,#94a3b8,#c7d2fe)"></div></div>
-  </div>
+<div class="result" id="result"></div>
 
-  <div class="strategy" id="strategyBox">
-    <strong>Estrategia:</strong>
-    <div id="strategyText" style="margin-top:8px">Ningún análisis aún.</div>
-  </div>
+<script>
+async function analyze() {
+  const symbol = document.getElementById("symbol").value;
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`);
+  const data = await res.json();
 
-  <div class="log" id="log">Registro de análisis aparecerá aquí...</div>
+  // Convertimos a precios de cierre
+  const closes = data.map(c => parseFloat(c[4]));
 
-  <canvas id="hiddenCanvas"></canvas>
-</div>
-
-<footer>Algoritmo: reducción de resolución + filtro por brillo, detección de píxeles por rango de matiz (HSV), regresión lineal sobre columna más brillante para estimar pendiente/tendencia, detección aproximada de "media" por pixels persistentes horizontalmente.</footer>
-
-  </div><script>
-// --- Utilidades color ---
-function rgbToHsv(r,g,b){r/=255;g/=255;b/=255;const max=Math.max(r,g,b), min=Math.min(r,g,b);const d=max-min;let h=0,s=0,v=max; if(d!==0){s=d/max; switch(max){case r: h=((g-b)/d)%6; break; case g: h=(b-r)/d+2; break; default: h=(r-g)/d+4; } h*=60; if(h<0) h+=360;} return {h: h, s: s, v: v};}
-
-// Linear regression simple (x array, y array)
-function linearRegression(x,y){const n=x.length; if(n===0) return {m:0,b:0}; const mx = x.reduce((a,b)=>a+b,0)/n; const my = y.reduce((a,b)=>a+b,0)/n; let num=0, den=0; for(let i=0;i<n;i++){num += (x[i]-mx)*(y[i]-my); den += (x[i]-mx)*(x[i]-mx);} const m = den===0 ? 0 : num/den; const b = my - m*mx; return {m,b};}
-
-// --- Análisis principal ---
-async function analyzeImage(file){
-  const resultEl = document.getElementById('result');
-  const logEl = document.getElementById('log');
-  const strategyText = document.getElementById('strategyText');
-  resultEl.innerHTML = '🔎 Analizando...';
-
-  const img = new Image();
-  img.src = await fileToDataURL(file);
-  await new Promise(r => img.onload = r);
-
-  const canvas = document.getElementById('hiddenCanvas');
-  const ctx = canvas.getContext('2d');
-
-  // Reducir la resolución para velocidad pero manteniendo proporción
-  const targetW = 600; // ancho de referencia
-  const ratio = img.width / img.height;
-  const w = Math.min(targetW, img.width);
-  const h = Math.round(w / ratio);
-  canvas.width = w; canvas.height = h;
-  ctx.drawImage(img,0,0,w,h);
-
-  const imageData = ctx.getImageData(0,0,w,h).data;
-
-  // Contadores y vectores para analizar por columna
-  let greenCount = 0, redCount = 0, neutralCount = 0, totalCount = 0;
-  const brightestYByColumn = new Array(w).fill(null);
-  const persistence = new Array(h).fill(0); // detecta pixeles horizontales persistentes
-
-  for(let x=0;x<w;x++){
-    let brightestVal = -1; let brightestY = null;
-    for(let y=0;y<h;y++){
-      const i = (y*w + x)*4;
-      const r = imageData[i], g = imageData[i+1], b = imageData[i+2];
-      const {h: hue, s: sat, v: val} = rgbToHsv(r,g,b);
-      const brightness = (r+g+b)/3;
-
-      // Ignorar zonas extremadamente oscuras o blancas (bordes/labels)
-      if(brightness < 18 || brightness > 245) continue;
-
-      // Filtrar por saturación mínima para evitar grises
-      if(sat < 0.2) { neutralCount++; totalCount++; continue; }
-
-      totalCount++;
-
-      // Rango de matiz para verde y rojo (en grados)
-      const isGreen = (hue >= 80 && hue <= 160) && g > r && g > b;
-      // rojo puede estar cerca de 0 o cerca de 360
-      const isRed = ((hue <= 20 || hue >= 340) && r > g && r > b) || (r>200 && g<100 && b<100);
-
-      if(isGreen) greenCount++;
-      else if(isRed) redCount++;
-      else neutralCount++;
-
-      if(val > brightestVal){ brightestVal = val; brightestY = y; }
-      // Para detectar líneas horizontales tipo MA: si pixel brillante lo marcamos
-      if(val > 0.65) persistence[y]++;
+  // Calcular RSI (14 periodos)
+  function calcRSI(prices, period = 14) {
+    let gains = 0, losses = 0;
+    for (let i = 1; i <= period; i++) {
+      const diff = prices[i] - prices[i - 1];
+      if (diff >= 0) gains += diff;
+      else losses -= diff;
     }
-    brightestYByColumn[x] = brightestY; // puede ser null
-  }
-
-  // Calcula porcentajes
-  const pGreen = Math.round((greenCount/(totalCount||1))*100);
-  const pRed = Math.round((redCount/(totalCount||1))*100);
-  const pNeutral = Math.round((neutralCount/(totalCount||1))*100);
-
-  // Llenar barras visuales
-  document.getElementById('greenBar').style.width = Math.min(100, pGreen) + '%';
-  document.getElementById('redBar').style.width = Math.min(100, pRed) + '%';
-  document.getElementById('neutralBar').style.width = Math.min(100, pNeutral) + '%';
-
-  // Pendiente de la "línea de precio" aproximada: usar columnas con brightestY
-  const xs = [], ys = [];
-  for(let x=0;x<w;x++){ const y = brightestYByColumn[x]; if(y !== null){ xs.push(x); ys.push(y); } }
-  const lr = linearRegression(xs, ys);
-  // En coordenadas de canvas, y=0 es arriba. Si pendiente m < 0 => hacia arriba (precio sube)
-  const slope = lr.m;
-
-  // Detectar "media simple" aproximada: buscar y con alta persistencia horizontal
-  let maDetected = false; let maY = null;
-  const thresholdPersistence = Math.max(6, Math.round(w * 0.02)); // require spread
-  for(let y=0;y<h;y++){
-    if(persistence[y] >= thresholdPersistence){ maDetected = true; maY = y; break; }
-  }
-
-  // Volatilidad (desviación de ys)
-  const meanY = ys.length? (ys.reduce((a,b)=>a+b,0)/ys.length) : h/2;
-  const variance = ys.length ? (ys.reduce((a,b)=>a+Math.pow(b-meanY,2),0)/ys.length) : 0;
-  const stdY = Math.sqrt(variance);
-
-  // Decisión basada en reglas (explicitas, nada al azar)
-  let decision = 'NEUTRO';
-  // regla 1: dominancia color fuerte
-  if(pGreen > pRed * 1.25 && pGreen > pNeutral) decision = 'COMPRA';
-  if(pRed > pGreen * 1.25 && pRed > pNeutral) decision = 'VENTA';
-
-  // regla 2: ajustar por pendiente
-  if(slope < -0.15) { // pendiente negativa en pix -> tendencia alcista
-    if(decision === 'VENTA') decision = 'NEUTRO (conflicto color/tendencia)';
-    else if(decision === 'NEUTRO') decision = 'COMPRA (pendiente alcista detectada)';
-  } else if(slope > 0.15) { // pendiente positiva en pix -> tendencia bajista
-    if(decision === 'COMPRA') decision = 'NEUTRO (conflicto color/tendencia)';
-    else if(decision === 'NEUTRO') decision = 'VENTA (pendiente bajista detectada)';
-  }
-
-  // regla 3: relación con MA si detectada
-  if(maDetected && maY !== null && ys.length){
-    const lastY = ys[ys.length-1];
-    if(lastY < maY - 4) { // price above MA (remember: smaller y = up)
-      if(decision === 'VENTA') decision = 'NEUTRO (precio por encima de MA)';
-      else decision = 'COMPRA (precio por encima de MA)';
-    } else if(lastY > maY + 4){
-      if(decision === 'COMPRA') decision = 'NEUTRO (precio por debajo de MA)';
-      else decision = 'VENTA (precio por debajo de MA)';
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+    for (let i = period + 1; i < prices.length; i++) {
+      const diff = prices[i] - prices[i - 1];
+      if (diff >= 0) {
+        avgGain = (avgGain * (period - 1) + diff) / period;
+        avgLoss = (avgLoss * (period - 1)) / period;
+      } else {
+        avgGain = (avgGain * (period - 1)) / period;
+        avgLoss = (avgLoss * (period - 1) - diff) / period;
+      }
     }
+    const rs = avgGain / (avgLoss || 1);
+    return 100 - 100 / (1 + rs);
   }
 
-  // construir estrategia textual con gestión de riesgo aproximada
-  const slopeDir = slope < -0.15 ? 'alcista' : slope > 0.15 ? 'bajista' : 'lateral';
-  let strategy = `Color: ${pGreen}% verde · ${pRed}% rojo · ${pNeutral}% neutro. \nPendiente estimada: ${slope.toFixed(3)} (${slopeDir}). \nVolatilidad visual (std): ${stdY.toFixed(1)} px.`;
+  const rsi = calcRSI(closes);
+  const smaShort = closes.slice(-7).reduce((a,b)=>a+b)/7;
+  const smaLong = closes.slice(-25).reduce((a,b)=>a+b)/25;
 
-  strategy += '\n\nDecisión principal: ' + decision + '.';
+  let signal = "";
+  if (rsi < 30 && smaShort > smaLong) signal = "🟢 COMPRA (sobreventa + cruce alcista)";
+  else if (rsi > 70 && smaShort < smaLong) signal = "🔴 VENTA (sobrecompra + cruce bajista)";
+  else signal = "⚪ NEUTRO (esperar confirmación)";
 
-  // Recomendaciones de riesgo (orientativas)
-  if(decision.includes('COMPRA')){
-    strategy += '\nSugerencia: Considerar entrada parcial (ej: 30%-50% del tamaño planificado).';
-    strategy += '\nStop-loss: por debajo de la última "zona baja" detectada (~' + Math.round(stdY*0.8) + ' px).';
-    strategy += '\nTake-profit: 1.5x - 2x del riesgo si tendencia es alcista.';
-  } else if(decision.includes('VENTA')){
-    strategy += '\nSugerencia: Evitar entradas agresivas si volatilidad alta. Entrada parcial posible.';
-    strategy += '\nStop-loss: por encima de la última "zona alta" detectada (~' + Math.round(stdY*0.8) + ' px).';
-    strategy += '\nTake-profit: 1.2x - 1.8x del riesgo dependiendo de la pendiente.';
-  } else {
-    strategy += '\nSugerencia: Mantenerse al margen o esperar confirmación (cambio claro en color o ruptura de MA).';
-  }
-
-  // Mostrar resultados
-  resultEl.innerHTML = (decision.includes('COMPRA')? '🟢 ' : decision.includes('VENTA')? '🔴 ' : '⚪ ') + decision + `<br><small class="muted">Análisis técnico visual (no es una garantía)</small>`;
-  strategyText.textContent = strategy;
-
-  // Log detallado
-  const now = new Date().toLocaleString();
-  const logLine = `\n[${now}] Decisión: ${decision} | %V:${pGreen}/${pRed}/${pNeutral} | slope:${slope.toFixed(3)} | MA:${maDetected?('y @'+maY):'no'}`;
-  logEl.textContent = logLine + '\n' + logEl.textContent;
-
-  return {decision,pGreen,pRed,pNeutral,slope,maDetected,maY,stdY};
+  document.getElementById("result").innerHTML = `
+    <b>${symbol}</b><br>
+    RSI: ${rsi.toFixed(2)}<br>
+    SMA 7: ${smaShort.toFixed(2)}<br>
+    SMA 25: ${smaLong.toFixed(2)}<br>
+    <br><b>Resultado:</b> ${signal}
+  `;
 }
-
-function fileToDataURL(file){return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=e=>res(e.target.result);fr.onerror=rej;fr.readAsDataURL(file);});}
-
-// --- UI wiring ---
-document.getElementById('analyzeBtn').addEventListener('click', async ()=>{
-  const f = document.getElementById('upload').files[0];
-  if(!f){ alert('⚠️ Primero seleccioná una imagen.'); return; }
-  try{ await analyzeImage(f); }catch(err){ console.error(err); alert('Error al analizar la imagen. Revisá la consola.'); }
-});
-
-document.getElementById('clearBtn').addEventListener('click', ()=>{
-  document.getElementById('upload').value = null;
-  document.getElementById('result').innerHTML = '📈 Esperando análisis...';
-  document.getElementById('greenBar').style.width = '0%';
-  document.getElementById('redBar').style.width = '0%';
-  document.getElementById('neutralBar').style.width = '0%';
-  document.getElementById('strategyText').textContent = 'Ningún análisis aún.';
-  document.getElementById('log').textContent = 'Registro de análisis aparecerá aquí...';
-});
-
-</script></body>
+</script>
+</body>
 </html>
