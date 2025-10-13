@@ -1,106 +1,162 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Trading Analyzer — Agresivo</title>
-<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-<style>
-  body{background:#0f172a;color:#e6eef8;font-family:Inter,Arial;margin:0;padding:20px;text-align:center}
-  .card{background:#111827;border-radius:12px;padding:20px;max-width:720px;margin:18px auto;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
-  button{background:#ef4444;color:#fff;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-weight:700}
-  #progress{height:10px;background:#0b1220;border-radius:8px;overflow:hidden;margin-top:12px}
-  #bar{height:100%;width:0%;background:linear-gradient(90deg,#f97316,#f43f5e);transition:width .3s}
-  #status{margin-top:14px;color:#9aa4b2}
-  #result{margin-top:18px;font-size:20px}
-  .arrow{font-size:60px;margin-top:8px}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Analyzer Pro (Android)</title>
+  <style>
+    body {
+      background-color: #0f172a;
+      color: #f1f5f9;
+      font-family: "Segoe UI", Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.4);
+      max-width: 500px;
+      margin: 30px auto;
+    }
+    button {
+      background: #38bdf8;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      margin: 10px 5px;
+      cursor: pointer;
+      font-weight: bold;
+      color: #fff;
+    }
+    button:hover { background: #0ea5e9; }
+    select {
+      background: #334155;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      width: 80%;
+      font-size: 15px;
+    }
+    #result { margin-top: 20px; font-size: 18px; }
+    #progress {
+      height: 10px;
+      background: #334155;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    #bar {
+      height: 100%;
+      width: 0%;
+      background: #38bdf8;
+      transition: width 0.2s ease;
+    }
+  </style>
 </head>
 <body>
+  <h1>🤖 Trading Analyzer Pro</h1>
   <div class="card">
-    <h2>Modo <strong>Agresivo</strong></h2>
-    <p>Detecta cambios rápidos — duración estimada corta (1–5 min)</p>
-    <input id="imageInput" type="file" accept="image/*"><br><br>
-    <button id="btn" disabled>Analizar (15s)</button>
+    <p>Sube una captura de tu gráfico (BTC, Forex, etc.)</p>
+    <input type="file" id="imageInput" accept="image/*"><br><br>
+
+    <label for="mode"><b>Modo de análisis:</b></label><br>
+    <select id="mode">
+      <option value="agresivo">🔥 Agresivo (1–3 min)</option>
+      <option value="equilibrado" selected>⚖️ Equilibrado (3–7 min)</option>
+      <option value="conservador">🧠 Conservador (7–15 min)</option>
+    </select><br>
+
+    <button onclick="analyzeChart()">Analizar (15 s)</button>
     <div id="progress"><div id="bar"></div></div>
-    <div id="status">Cargando OpenCV...</div>
     <div id="result"></div>
   </div>
 
-<script>
-const btn = document.getElementById('btn');
-const bar = document.getElementById('bar');
-const status = document.getElementById('status');
-const result = document.getElementById('result');
+  <canvas id="canvas" style="display:none;"></canvas>
 
-cv['onRuntimeInitialized'] = ()=> {
-  status.textContent = 'OpenCV listo ✅';
-  btn.disabled = false;
-};
+  <script>
+    async function analyzeChart() {
+      const input = document.getElementById('imageInput');
+      const result = document.getElementById('result');
+      const bar = document.getElementById('bar');
+      const mode = document.getElementById('mode').value;
 
-btn.addEventListener('click', async ()=>{
-  const input = document.getElementById('imageInput');
-  if(!input.files[0]) { status.textContent = 'Sube una imagen antes.'; return; }
-  // reset UI
-  result.innerHTML = '';
-  bar.style.width = '0%';
-  status.textContent = '⏳ Análisis en curso (15s)...';
-  btn.disabled = true;
-
-  // progress 15s -> 100 steps
-  let p = 0;
-  const tick = 150; // 150ms * 100 = 15000 ms
-  const interval = setInterval(()=>{ p++; bar.style.width = Math.min(100,p)+'%'; if(p>=100) clearInterval(interval); }, tick);
-
-  const img = new Image();
-  img.src = URL.createObjectURL(input.files[0]);
-  img.onload = ()=> {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width; canvas.height = img.height;
-    const ctx = canvas.getContext('2d'); ctx.drawImage(img,0,0);
-
-    // ejecutar análisis después de 15s
-    setTimeout(()=> {
-      try {
-        // lectura básica HSV
-        let src = cv.imread(canvas);
-        let blur = new cv.Mat(); cv.GaussianBlur(src, blur, new cv.Size(3,3), 0);
-        let hsv = new cv.Mat(); cv.cvtColor(blur, hsv, cv.COLOR_RGBA2HSV);
-        let channels = new cv.MatVector(); cv.split(hsv, channels);
-        let hue = channels.get(0), sat = channels.get(1), val = channels.get(2);
-        const meanHue = cv.mean(hue)[0], meanSat = cv.mean(sat)[0], meanVal = cv.mean(val)[0];
-
-        // AGRESIVO: umbrales suaves -> detecta incluso sutiles verdes/rojos
-        const greenScore = (meanHue >= 30 && meanHue <= 95) ? meanSat : 0;
-        const redScore = (meanHue <= 20 || meanHue >= 160) ? meanSat : 0;
-        // tendencia rápida: usar variance de valor para "volatilidad"
-        const vol = cv.meanStdDev(val)[1][0];
-
-        // score combinado (ponderar color fuertemente)
-        const score = (greenScore - redScore) * 0.7 + (meanVal - 128) * 0.05 + vol * 0.02;
-        const conf = Math.min(99, Math.round(Math.abs(score)/2 + 60));
-        const decision = score > 0 ? '📈 COMPRA (BUY)' : '📉 VENTA (SELL)';
-        const dir = score > 0 ? '⬆️' : '⬇️';
-        // Duración agresiva: 1-5 min, inclinada a corto
-        const duration = Math.max(1, Math.round(Math.abs(score) % 5) || 2);
-
-        // liberar mats
-        src.delete(); blur.delete(); hsv.delete(); channels.delete(); hue.delete(); sat.delete(); val.delete();
-
-        // mostrar 1s después
-        setTimeout(()=>{
-          status.textContent = 'Análisis completado';
-          result.innerHTML = `<div class="arrow">${dir}</div><div><strong style="font-size:20px">${decision}</strong></div><div style="margin-top:6px">Subirá/Bajará próximamente (${duration} min)</div><div style="color:#9aa4b2;margin-top:6px">Confianza: ${conf}%</div>`;
-          btn.disabled = false;
-        }, 1000);
-
-      } catch(e){
-        status.textContent = 'Error en análisis: ' + e.message;
-        btn.disabled = false;
+      if (!input.files[0]) {
+        result.innerHTML = "⚠️ Por favor, sube una imagen del gráfico.";
+        return;
       }
-    }, 15000);
-  };
-});
-</script>
+
+      result.innerHTML = "⏳ Analizando imagen... (15 s)";
+      bar.style.width = "0%";
+
+      // Simula barra de progreso
+      let progress = 0;
+      const interval = setInterval(() => {
+        progress += 1;
+        bar.style.width = progress + "%";
+        if (progress >= 100) clearInterval(interval);
+      }, 150);
+
+      const img = new Image();
+      img.src = URL.createObjectURL(input.files[0]);
+
+      img.onload = function() {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0, img.width, img.height);
+
+        const data = ctx.getImageData(0, 0, img.width, img.height).data;
+
+        let red = 0, green = 0, gray = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const [r, g, b] = [data[i], data[i+1], data[i+2]];
+          const avg = (r + g + b) / 3;
+          if (r > g + 30 && r > b + 30) red++;
+          else if (g > r + 30 && g > b + 30) green++;
+          else if (avg > 40 && avg < 130) gray++;
+        }
+
+        setTimeout(() => {
+          const total = red + green + gray;
+          const pRed = (red / total) * 100;
+          const pGreen = (green / total) * 100;
+
+          let decision = "";
+          let color = "";
+          let duracion = "";
+
+          // Ajustes según modo
+          let margen = mode === "agresivo" ? 3 : mode === "conservador" ? 8 : 5;
+
+          if (pGreen > pRed + margen) {
+            decision = "📈 COMPRA (BUY)";
+            color = "#22c55e";
+          } else if (pRed > pGreen + margen) {
+            decision = "📉 VENTA (SELL)";
+            color = "#ef4444";
+          } else {
+            decision = "⚖️ INTERMEDIO (ESPERAR)";
+            color = "#eab308";
+          }
+
+          // Duración según modo
+          if (mode === "agresivo") duracion = "1–3 min";
+          else if (mode === "equilibrado") duracion = "3–7 min";
+          else duracion = "7–15 min";
+
+          result.innerHTML = `
+            <p><b>Resultado del análisis:</b></p>
+            <p style="color:${color}; font-size:22px;">${decision}</p>
+            <p>Duración estimada: <b>${duracion}</b></p>
+            <p>(Modo: ${mode.charAt(0).toUpperCase() + mode.slice(1)})</p>
+          `;
+        }, 16000);
+      };
+    }
+  </script>
 </body>
 </html>
