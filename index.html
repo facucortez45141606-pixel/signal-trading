@@ -4,13 +4,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Signal Trading - Analizador por Imagen (Mejorado + Backtest/Candles/Memory)</title>
+<title>Signal Trading - Analizador por Imagen (Mejorado + Backtest/Candles/Memory + Advanced Candles)</title>
 <style>
 :root{--bg:#0f172a;--card:#0b1220;--muted:#94a3b8;--accent:#38bdf8}
 *{box-sizing:border-box}
 body{background:var(--bg);color:#e2e8f0;font-family:Inter, 'Segoe UI', sans-serif;margin:0;padding:0}
 header{background:#0b1220;padding:14px;text-align:center;font-size:1.05rem;font-weight:700;color:var(--accent)}
-.container{display:grid;grid-template-columns:1fr 360px;gap:12px;padding:12px}
+.container{display:grid;grid-template-columns:1fr 380px;gap:12px;padding:12px}
 .canvas-wrap{background:var(--card);border-radius:10px;padding:10px;}
 #chart{background:transparent;border-radius:8px;display:block;width:100%;height:420px}
 .controls{background:#0b1220;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
@@ -34,7 +34,7 @@ button:active{transform:translateY(1px)}
   <div class="canvas-wrap">
     <canvas id="chart" role="img" aria-label="Gráfico extraído"></canvas>
     <div id="summary" class="small"></div>
-    <div class="small">Sube una captura del gráfico (captura que muestre la curva o velas). El analizador extrae una serie de precios y calcula indicadores técnicos. Ahora incluye detección de velas, backtest simple y memoria incremental (localStorage).</div>
+    <div class="small">Sube una captura del gráfico (captura que muestre la curva o velas). El analizador extrae una serie de precios y calcula indicadores técnicos. Incluye ahora detección avanzada de velas (blancas/ negras), backtest simple y memoria local.</div>
   </div>
 
   <div class="controls">
@@ -55,7 +55,8 @@ button:active{transform:translateY(1px)}
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="analyzeBtn">Analizar Imagen</button>
       <button id="autoEnhance">Auto‑enhance</button>
-      <button id="detectCandles">Detectar Velas</button>
+      <button id="detectCandles">Detectar Velas (básico)</button>
+      <button id="detectAdvanced">Detección Avanzada de Velas</button>
       <button id="backtestBtn">Backtest (simular)</button>
     </div>
 
@@ -70,7 +71,7 @@ button:active{transform:translateY(1px)}
   </div>
 </div>
 
-<div class="footer">Listo para usar en GitHub Pages (index.html). Guardado local de patrones habilitado para aprendizaje incremental.</div>
+<div class="footer">Archivo listo para GitHub Pages. La detección avanzada está optimizada para velas blancas/ negras.</div>
 
 <script>
 /* --------------------- UTIL --------------------- */
@@ -78,7 +79,7 @@ const dpr = Math.max(1, window.devicePixelRatio || 1);
 function log(msg){ const el=document.getElementById('log'); el.innerHTML += `<div>${new Date().toLocaleTimeString()} → ${msg}</div>`; el.scrollTop = el.scrollHeight; }
 function clamp(n,a,b){return Math.max(a,Math.min(b,n));}
 
-/* --------------------- INDICADORES (mejoras) --------------------- */
+/* --------------------- INDICADORES --------------------- */
 function EMA_fromArray(values, period){ if(!values.length) return []; const out = new Array(values.length).fill(null); const k = 2/(period+1); if(values.length >= period){ let sma = 0; for(let i=0;i<period;i++) sma += values[i]; sma /= period; out[period-1] = sma; let prev = sma; for(let i=period;i<values.length;i++){ prev = values[i]*k + prev*(1-k); out[i] = prev; } for(let i=0;i<period-1;i++) out[i] = values[0]; } else { for(let i=0;i<values.length;i++) out[i] = values[i]; } return out; }
 function RSI_fromArray(values, period){ const n = values.length; if(n<=1) return new Array(n).fill(null); const out = new Array(n).fill(null); let gains=0, losses=0; for(let i=1;i<=period && i<n;i++){ const d = values[i]-values[i-1]; if(d>0) gains+=d; else losses += -d; } let avgGain = gains/period || 0; let avgLoss = losses/period || 0; if(n>period) out[period] = 100 - (100/(1 + (avgGain/(avgLoss||1e-9)))); for(let i=period+1;i<n;i++){ const d = values[i]-values[i-1]; const g = d>0?d:0; const l = d<0?-d:0; avgGain = (avgGain*(period-1) + g)/period; avgLoss = (avgLoss*(period-1)+l)/period; out[i] = 100 - (100/(1 + (avgGain/(avgLoss||1e-9)))); } return out; }
 function MACD_fromArray(values, fast=12, slow=26, signal=9){ const emaFast = EMA_fromArray(values, fast); const emaSlow = EMA_fromArray(values, slow); const macd = values.map((v,i)=> (emaFast[i]||0) - (emaSlow[i]||0)); const signalLine = EMA_fromArray(macd, signal); const hist = macd.map((v,i)=> v - (signalLine[i]||0)); return {macd, signalLine, hist}; }
@@ -94,70 +95,141 @@ function drawSeries(canvasId, prices, emaS, emaL, decision, candles){ const canv
   if(emaS && emaS.length){ ctx.lineWidth=1.4; ctx.strokeStyle='#22c55e'; ctx.beginPath(); emaS.forEach((v,i)=>{ const pt=xy(i,v); i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y); }); ctx.stroke(); }
   if(emaL && emaL.length){ ctx.lineWidth=1.4; ctx.strokeStyle='#ef4444'; ctx.beginPath(); emaL.forEach((v,i)=>{ const pt=xy(i,v); i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y); }); ctx.stroke(); }
   // candles (if any)
-  if(candles && candles.length){ const barW = Math.max(2, (w-2*pad)/candles.length*0.8); for(let i=0;i<candles.length;i++){ const c = candles[i]; const cx = pad + i/(candles.length-1)*(w-2*pad||1); const yOpen = xy(i,c.open).y; const yClose = xy(i,c.close).y; const yHigh = xy(i,c.high).y; const yLow = xy(i,c.low).y; ctx.beginPath(); ctx.moveTo(cx, yHigh); ctx.lineTo(cx, yLow); ctx.strokeStyle = c.close>=c.open? '#22c55e' : '#ef4444'; ctx.lineWidth = 1; ctx.stroke(); ctx.fillStyle = c.close>=c.open? '#22c55e' : '#ef4444'; ctx.fillRect(cx - barW/2, Math.min(yOpen,yClose), barW, Math.max(1, Math.abs(yClose - yOpen))); }}
+  if(candles && candles.length){ const barW = Math.max(2, (w-2*pad)/candles.length*0.8); for(let i=0;i<candles.length;i++){ const c = candles[i]; const cx = pad + i/(candles.length-1)*(w-2*pad||1); const yOpen = xy(i,c.open).y; const yClose = xy(i,c.close).y; const yHigh = xy(i,c.high).y; const yLow = xy(i,c.low).y; ctx.beginPath(); ctx.moveTo(cx, yHigh); ctx.lineTo(cx, yLow); ctx.strokeStyle = c.bullish? '#222':'#fff'; ctx.lineWidth = 1; ctx.stroke(); ctx.fillStyle = c.bullish? '#fff' : '#222'; // white fill for bullish (white candle), dark fill for bearish
+      // draw body
+      ctx.fillRect(cx - barW/2, Math.min(yOpen,yClose), barW, Math.max(1, Math.abs(yClose - yOpen))); }}
   // last marker
   const last = xy(prices.length-1, prices[prices.length-1]); ctx.beginPath(); ctx.fillStyle = decision==='COMPRAR'? '#22c55e' : '#ef4444'; ctx.arc(last.x,last.y,6,0,Math.PI*2); ctx.fill(); }
 
-/* --------------------- IMAGE -> SERIES (mejor robustez) --------------------- */
+/* --------------------- IMAGE -> SERIES (robusta) --------------------- */
 function extractPriceSeriesFromImage(img, maxCols=220, doEnhance=false){ const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height; const scale = Math.min(1, maxCols/iw); const w = Math.max(40, Math.round(iw * scale)); const h = Math.max(40, Math.round(ih * scale)); const off = document.createElement('canvas'); off.width = w; off.height = h; const ctx = off.getContext('2d'); ctx.drawImage(img, 0, 0, w, h); let imgd = ctx.getImageData(0,0,w,h), data = imgd.data; const gray = new Float32Array(w*h); for(let i=0;i<w*h;i++){ const r=data[i*4], g=data[i*4+1], b=data[i*4+2]; gray[i] = 0.2126*r + 0.7152*g + 0.0722*b; } if(doEnhance){ let min=255, max=0; for(let i=0;i<gray.length;i++){ if(gray[i]<min) min=gray[i]; if(gray[i]>max) max=gray[i]; } const range = Math.max(1, max-min); for(let i=0;i<gray.length;i++) gray[i] = (gray[i]-min)/range*255; } const sobel = new Float32Array(w*h); for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const i = y*w + x; const gx = -gray[i-w-1] + gray[i-w+1] -2*gray[i-1] + 2*gray[i+1] -gray[i+w-1] + gray[i+w+1]; const gy = -gray[i-w-1] -2*gray[i-w] - gray[i-w+1] + gray[i+w-1] + 2*gray[i+w] + gray[i+w+1]; sobel[i] = Math.hypot(gx,gy); } }
   const pricesY = new Array(w).fill(null);
   for(let x=0;x<w;x++){ let sumW=0, sumY=0; for(let y=0;y<h;y++){ const v = sobel[y*w + x]; if(v>8){ sumW += v; sumY += v*y; } } if(sumW>0) pricesY[x] = sumY/sumW; else pricesY[x] = null; }
   for(let i=0;i<w;i++){ if(pricesY[i]===null){ let l=i-1; while(l>=0 && pricesY[l]===null) l--; let r=i+1; while(r<w && pricesY[r]===null) r++; if(l>=0 && r<w) pricesY[i] = pricesY[l] + (pricesY[r]-pricesY[l])*((i-l)/(r-l)); else if(l>=0) pricesY[i] = pricesY[l]; else if(r<w) pricesY[i] = pricesY[r]; else pricesY[i] = h/2; } }
   const minY = Math.min(...pricesY), maxY = Math.max(...pricesY); const series = pricesY.map(y => 100 + ((maxY - y)/(maxY-minY||1))*20); return series; }
 
-/* --------------------- CANDLE DETECTION (approx from series) --------------------- */
-function detectCandlesFromSeries(series, buckets=60){ // group series into buckets and compute OHLC
-  const n = series.length; if(n===0) return [];
-  const step = Math.max(1, Math.floor(n / buckets)); const candles = [];
-  for(let i=0;i<n;i+=step){ const slice = series.slice(i, i+step); const open = slice[0]; const close = slice[slice.length-1]; const high = Math.max(...slice); const low = Math.min(...slice); candles.push({open, high, low, close}); }
-  return candles;
+/* --------------------- DETECCIÓN AVANZADA DE VELAS (imagen -> OHLC) --------------------- */
+function detectCandlesticksFromImage(img, approxCandlePx=6){
+  // returns array of candles {open,high,low,close,bullish}
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  // scale image to reasonable width for processing
+  const maxW = 600; const scale = Math.min(1, maxW / iw); const w = Math.max(60, Math.round(iw * scale)); const h = Math.max(40, Math.round(ih * scale));
+  const off = document.createElement('canvas'); off.width = w; off.height = h; const ctx = off.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+  const imgd = ctx.getImageData(0,0,w,h); const data = imgd.data;
+  // estimate background color by sampling corners
+  function samplePixel(x,y){ const i = (y*w + x)*4; return [data[i], data[i+1], data[i+2]]; }
+  function colorDist(a,b){ return Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); }
+  const c1 = samplePixel(2,2), c2 = samplePixel(w-3,2), c3 = samplePixel(2,h-3), c4 = samplePixel(w-3,h-3);
+  const bg = [(c1[0]+c2[0]+c3[0]+c4[0])/4, (c1[1]+c2[1]+c3[1]+c4[1])/4, (c1[2]+c2[2]+c3[2]+c4[2])/4];
+  const bgThresh = 40; // pixels close to bg are background
+
+  // per-column profiles: collect non-bg pixels positions
+  const colProfiles = new Array(w).fill(null).map(()=>[]);
+  for(let x=0;x<w;x++){
+    for(let y=0;y<h;y++){
+      const idx = (y*w + x)*4; const px = [data[idx], data[idx+1], data[idx+2]]; if(colorDist(px, bg) > bgThresh){ colProfiles[x].push({y,px}); }
+    }
+  }
+
+  // compress contiguous columns into candle groups
+  const groups = []; let curGroup = null;
+  for(let x=0;x<w;x++){
+    const prof = colProfiles[x]; if(prof.length === 0){ if(curGroup){ groups.push(curGroup); curGroup = null; } continue; }
+    if(!curGroup) curGroup = {start:x, end:x, cols:[{x,prof}]}; else { curGroup.end = x; curGroup.cols.push({x,prof}); }
+  }
+  if(curGroup) groups.push(curGroup);
+
+  const candles = [];
+  for(const g of groups){
+    // determine high/low by min/max y across group
+    let high = h, low = 0; const colMeans = [];
+    for(const col of g.cols){ const ys = col.prof.map(p=>p.y); if(!ys.length) continue; const cmin = Math.min(...ys); const cmax = Math.max(...ys); if(cmin < high) high = cmin; if(cmax > low) low = cmax; // accumulate mean brightness to infer body
+      // compute avg intensity per column
+      let sum=0; for(const p of col.prof){ sum += (p.px[0]+p.px[1]+p.px[2])/3; } colMeans.push(sum/col.prof.length);
+    }
+    if(colMeans.length===0) continue;
+    // approximate open/close: use mean y of left third and right third
+    const leftCols = g.cols.slice(0, Math.max(1, Math.floor(g.cols.length/3))); const rightCols = g.cols.slice(Math.max(1, Math.floor(g.cols.length*2/3)));
+    function avgMidY(cols){ const vals=[]; for(const c of cols){ const ys = c.prof.map(p=>p.y); vals.push(ys.reduce((a,b)=>a+b,0)/ys.length); } return vals.reduce((a,b)=>a+b,0)/vals.length; }
+    const openY = avgMidY(leftCols); const closeY = avgMidY(rightCols);
+    // convert y->price-like scale (invert)
+    // we will map within this candle: higher price = smaller y
+    const highY = high, lowY = low; const openP = (highY - openY)/(highY - lowY || 1); const closeP = (highY - closeY)/(highY - lowY || 1);
+    // map to global price scale later — for now store normalized 0..1 relative to this candle
+    // determine bullish: white candles have bright bodies; in white/black scheme, bullish is white body (bright) and close above open
+    const avgLeftIntensity = colMeans.slice(0, Math.max(1, Math.floor(colMeans.length/3))).reduce((a,b)=>a+b,0)/Math.max(1, Math.floor(colMeans.length/3));
+    const avgRightIntensity = colMeans.slice(Math.max(0, Math.floor(colMeans.length*2/3))).reduce((a,b)=>a+b,0)/Math.max(1, Math.floor(colMeans.length/3));
+    const bodyBrighter = avgRightIntensity > avgLeftIntensity; // if right brighter than left likely bullish (white)
+    const bullish = bodyBrighter ? true : false;
+
+    candles.push({start:g.start, end:g.end, highY, lowY, openY, closeY, openP, closeP, bullish});
+  }
+
+  // Convert normalized candle Ys to price-like numbers across full image using detected overall y-range from edge-detection
+  // We'll reuse the extractPriceSeriesFromImage approach to get global min/max Y
+  const seriesY = []; // compute centroid per column (like before)
+  for(let x=0;x<w;x++){ const prof = colProfiles[x]; if(prof.length){ let sumW=0,sumY=0; for(const p of prof){ const weight = (p.px[0]+p.px[1]+p.px[2])/3; sumW+=weight; sumY+=weight*p.y; } seriesY.push(sumY/sumW); } else seriesY.push(null); }
+  // interpolate
+  for(let i=0;i<seriesY.length;i++){ if(seriesY[i]===null){ let l=i-1; while(l>=0 && seriesY[l]===null) l--; let r=i+1; while(r<seriesY.length && seriesY[r]===null) r++; if(l>=0 && r<seriesY.length) seriesY[i] = seriesY[l] + (seriesY[r]-seriesY[l])*((i-l)/(r-l)); else if(l>=0) seriesY[i] = seriesY[l]; else if(r<seriesY.length) seriesY[i] = seriesY[r]; else seriesY[i] = h/2; } }
+  const minY = Math.min(...seriesY), maxY = Math.max(...seriesY);
+
+  // Produce final candlesticks with price-like mapping: price = 100 + (maxY - y)/(maxY-minY)*20
+  const final = candles.map(c=>{
+    const open = 100 + ((maxY - c.openY)/(maxY - minY || 1))*20;
+    const close = 100 + ((maxY - c.closeY)/(maxY - minY || 1))*20;
+    const high = 100 + ((maxY - c.highY)/(maxY - minY || 1))*20;
+    const low  = 100 + ((maxY - c.lowY)/(maxY - minY || 1))*20;
+    return {open, high, low, close, bullish: !!c.bullish};
+  });
+  return final;
 }
 
-/* --------------------- DECISION (sin neutro) --------------------- */
-function decideFromSeries(series, params, dynamicWeights){ const closes = series.slice(); if(closes.length < 5) return {decision:'VENDER', confidence:12, duration:'Serie corta', debug:{}}; const emaShortArr = EMA_fromArray(closes, params.emaShort); const emaLongArr  = EMA_fromArray(closes, params.emaLong); const rsiArr = RSI_fromArray(closes, params.rsiP); const macd = MACD_fromArray(closes, params.emaShort, params.emaLong, 9); const i = closes.length - 1; const subs = {}; subs.trend = (emaShortArr[i] > emaLongArr[i])?1:0; subs.rsi = (rsiArr[i]===null)?0.5:clamp((rsiArr[i]-30)/(70-30),0,1); subs.macd = (macd.hist[i] > 0)?1:0; let green=0, red=0; for(let k=Math.max(0,closes.length-20); k<closes.length; k++){ if(k===0) continue; if(closes[k] > closes[k-1]) green++; else if(closes[k] < closes[k-1]) red++; } subs.recent = green >= 3 ? 1 : (red >=3 ? -1 : 0);
-  let w = dynamicWeights || {trend:0.30, rsi:0.18, macd:0.18, recent:0.18}; let buyScore = subs.trend*w.trend + subs.rsi*w.rsi + subs.macd*w.macd + (subs.recent===1? w.recent:0); let sellScore = (1-subs.trend)*w.trend + (1-subs.rsi)*w.rsi + (subs.macd===0? w.macd:0) + (subs.recent===-1? w.recent:0); if(params.mode==='agresivo'){ buyScore *= 1.12; sellScore *= 1.12; } if(params.mode==='conservador'){ buyScore *= 0.9; sellScore *= 0.9; } const decision = buyScore >= sellScore ? 'COMPRAR' : 'VENDER'; const conf = clamp(Math.abs(buyScore - sellScore) / (buyScore + sellScore + 1e-9) * 100 * (1 + Math.abs(subs.rsi-0.5)), 10, 99); let duration = 'Baja confianza'; if(conf > 75) duration = params.mode==='agresivo' ? '1-5 min' : params.mode==='equilibrado' ? '3-15 min' : '10-30 min'; else if(conf>50) duration = '5-20 min'; return {decision, confidence:Math.round(conf), duration, debug:{subs, buyScore, sellScore}}; }
+/* --------------------- CANDLE DETECTION (approx from series) --------------------- */
+function detectCandlesFromSeries(series, buckets=60){ const n = series.length; if(n===0) return []; const step = Math.max(1, Math.floor(n / buckets)); const candles = []; for(let i=0;i<n;i+=step){ const slice = series.slice(i, i+step); const open = slice[0]; const close = slice[slice.length-1]; const high = Math.max(...slice); const low = Math.min(...slice); candles.push({open, high, low, close, bullish: close>=open}); } return candles; }
 
-/* --------------------- BACKTEST (simple market entries) --------------------- */
-function backtestSimulate(series, params, startingBalance=1000){ // assume unit position size fraction of balance
-  const balance = {cash: startingBalance, pos:0}; let history = []; let openPrice = null; for(let t=5;t<series.length;t++){ const slice = series.slice(0,t+1); const res = decideFromSeries(slice, params); const price = series[t]; if(res.decision === 'COMPRAR' && balance.pos === 0){ // open long with 10% of cash
-      const size = (balance.cash * 0.1) / price; if(size>0){ balance.pos = size; balance.cash -= size*price; openPrice = price; history.push({type:'buy', price, time:t}); }
-    } else if(res.decision === 'VENDER' && balance.pos > 0){ // close
-      balance.cash += balance.pos * price; history.push({type:'sell', price, time:t, entry:openPrice}); balance.pos = 0; openPrice = null; }
-  }
-  // close at end
-  if(balance.pos > 0){ const price = series[series.length-1]; balance.cash += balance.pos * price; history.push({type:'sell', price, time:series.length-1, entry:openPrice}); balance.pos = 0; }
-  const pnl = balance.cash - startingBalance; return {finalBalance: balance.cash, pnl, trades: history}; }
+/* --------------------- DECISION & BACKTEST & LEARNING (sin cambios sustanciales) --------------------- */
+function decideFromSeries(series, params, dynamicWeights){ const closes = series.slice(); if(closes.length < 5) return {decision:'VENDER', confidence:12, duration:'Serie corta', debug:{}}; const emaShortArr = EMA_fromArray(closes, params.emaShort); const emaLongArr  = EMA_fromArray(closes, params.emaLong); const rsiArr = RSI_fromArray(closes, params.rsiP); const macd = MACD_fromArray(closes, params.emaShort, params.emaLong, 9); const i = closes.length - 1; const subs = {}; subs.trend = (emaShortArr[i] > emaLongArr[i])?1:0; subs.rsi = (rsiArr[i]===null)?0.5:clamp((rsiArr[i]-30)/(70-30),0,1); subs.macd = (macd.hist[i] > 0)?1:0; let green=0, red=0; for(let k=Math.max(0,closes.length-20); k<closes.length; k++){ if(k===0) continue; if(closes[k] > closes[k-1]) green++; else if(closes[k] < closes[k-1]) red++; } subs.recent = green >= 3 ? 1 : (red >=3 ? -1 : 0); let w = dynamicWeights || {trend:0.30, rsi:0.18, macd:0.18, recent:0.18}; let buyScore = subs.trend*w.trend + subs.rsi*w.rsi + subs.macd*w.macd + (subs.recent===1? w.recent:0); let sellScore = (1-subs.trend)*w.trend + (1-subs.rsi)*w.rsi + (subs.macd===0? w.macd:0) + (subs.recent===-1? w.recent:0); if(params.mode==='agresivo'){ buyScore *= 1.12; sellScore *= 1.12; } if(params.mode==='conservador'){ buyScore *= 0.9; sellScore *= 0.9; } const decision = buyScore >= sellScore ? 'COMPRAR' : 'VENDER'; const conf = clamp(Math.abs(buyScore - sellScore) / (buyScore + sellScore + 1e-9) * 100 * (1 + Math.abs(subs.rsi-0.5)), 10, 99); let duration = 'Baja confianza'; if(conf > 75) duration = params.mode==='agresivo' ? '1-5 min' : params.mode==='equilibrado' ? '3-15 min' : '10-30 min'; else if(conf>50) duration = '5-20 min'; return {decision, confidence:Math.round(conf), duration, debug:{subs, buyScore, sellScore}}; }
 
-/* --------------------- LEARNING (localStorage incremental) --------------------- */
-function savePattern(series, params, result){ // store small summary to localStorage
-  try{ const db = JSON.parse(localStorage.getItem('st_patterns')||'[]'); const item = {time:Date.now(), series: series.slice(-80), params, result}; db.push(item); localStorage.setItem('st_patterns', JSON.stringify(db)); log('Patrón guardado ('+db.length+' totales)'); }catch(e){ log('Error guardando patrón: '+e.message); } }
+function backtestSimulate(series, params, startingBalance=1000){ const balance = {cash: startingBalance, pos:0}; let history = []; let openPrice = null; for(let t=5;t<series.length;t++){ const slice = series.slice(0,t+1); const res = decideFromSeries(slice, params); const price = series[t]; if(res.decision === 'COMPRAR' && balance.pos === 0){ const size = (balance.cash * 0.1) / price; if(size>0){ balance.pos = size; balance.cash -= size*price; openPrice = price; history.push({type:'buy', price, time:t}); } } else if(res.decision === 'VENDER' && balance.pos > 0){ balance.cash += balance.pos * price; history.push({type:'sell', price, time:t, entry:openPrice}); balance.pos = 0; openPrice = null; } } if(balance.pos > 0){ const price = series[series.length-1]; balance.cash += balance.pos * price; history.push({type:'sell', price, time:series.length-1, entry:openPrice}); balance.pos = 0; } const pnl = balance.cash - startingBalance; return {finalBalance: balance.cash, pnl, trades: history}; }
+
+function savePattern(series, params, result){ try{ const db = JSON.parse(localStorage.getItem('st_patterns')||'[]'); const item = {time:Date.now(), series: series.slice(-80), params, result}; db.push(item); localStorage.setItem('st_patterns', JSON.stringify(db)); log('Patrón guardado ('+db.length+' totales)'); }catch(e){ log('Error guardando patrón: '+e.message); } }
 function loadPatterns(){ try{ return JSON.parse(localStorage.getItem('st_patterns')||'[]'); }catch(e){ return []; } }
-function deriveWeightsFromPatterns(){ // very simple: if patterns show that trend mattered more, increase its weight
-  const db = loadPatterns(); if(!db.length) return null; let trendScore=0, rsiScore=0, macdScore=0, recentScore=0; db.forEach(p=>{ const s = p.series; const params = p.params; const dec = p.result.decision; const pnl = p.result.pnl || 0; const sign = pnl>0?1:-1; // crude
-    if(p.result.debug && p.result.debug.subs){ const subs = p.result.debug.subs; trendScore += subs.trend * sign; rsiScore += subs.rsi * sign; macdScore += subs.macd * sign; recentScore += (subs.recent||0) * sign; }
-  }); const total = Math.abs(trendScore)+Math.abs(rsiScore)+Math.abs(macdScore)+Math.abs(recentScore) || 1; const w = {trend: Math.abs(trendScore)/total, rsi: Math.abs(rsiScore)/total, macd: Math.abs(macdScore)/total, recent: Math.abs(recentScore)/total}; // normalize
-  // apply baseline smoothing
-  const base = {trend:0.30, rsi:0.18, macd:0.18, recent:0.18}; Object.keys(w).forEach(k=> w[k] = clamp((w[k]*0.6 + base[k]*0.4), 0.05, 0.6)); // avoid extremes
-  // renormalize
-  const sum = w.trend + w.rsi + w.macd + w.recent || 1; Object.keys(w).forEach(k=> w[k] = w[k]/sum);
-  return w; }
+function deriveWeightsFromPatterns(){ const db = loadPatterns(); if(!db.length) return null; let trendScore=0, rsiScore=0, macdScore=0, recentScore=0; db.forEach(p=>{ const s = p.series; const params = p.params; const dec = p.result.decision; const pnl = p.result.pnl || 0; const sign = pnl>0?1:-1; if(p.result.debug && p.result.debug.subs){ const subs = p.result.debug.subs; trendScore += subs.trend * sign; rsiScore += subs.rsi * sign; macdScore += subs.macd * sign; recentScore += (subs.recent||0) * sign; } }); const total = Math.abs(trendScore)+Math.abs(rsiScore)+Math.abs(macdScore)+Math.abs(recentScore) || 1; const w = {trend: Math.abs(trendScore)/total, rsi: Math.abs(rsiScore)/total, macd: Math.abs(macdScore)/total, recent: Math.abs(recentScore)/total}; const base = {trend:0.30, rsi:0.18, macd:0.18, recent:0.18}; Object.keys(w).forEach(k=> w[k] = clamp((w[k]*0.6 + base[k]*0.4), 0.05, 0.6)); const sum = w.trend + w.rsi + w.macd + w.recent || 1; Object.keys(w).forEach(k=> w[k] = w[k]/sum); return w; }
 
-/* --------------------- MAIN UI --------------------- */
-let lastImage = null; let lastSeries = null; let lastParams = null; let showDebug = false;
+/* --------------------- MAIN UI + EVENTS --------------------- */
+let lastImage = null; let lastSeries = null; let lastParams = null; let showDebug = false; let lastDecisionResult = null;
 const imgInput = document.getElementById('imgInput'); imgInput.addEventListener('change', ev=>{ const f = ev.target.files && ev.target.files[0]; if(!f) return; const url = URL.createObjectURL(f); const img = new Image(); img.onload = ()=>{ lastImage = img; log('Imagen cargada. Listo para analizar.'); URL.revokeObjectURL(url); }; img.onerror = ()=>{ log('Error al cargar la imagen.'); URL.revokeObjectURL(url); }; img.src = url; });
 
 document.getElementById('autoEnhance').addEventListener('click', ()=>{ if(!lastImage) return log('Primero subí una imagen.'); document.getElementById('timer').textContent = 'Procesando (auto-enhance)...'; setTimeout(()=>{ try{ const series = extractPriceSeriesFromImage(lastImage, 360, true); lastSeries = series; displayResultFromSeries(series); }catch(e){ log('Error: '+e.message); } document.getElementById('timer').textContent = ''; }, 80); });
 
 document.getElementById('analyzeBtn').addEventListener('click', ()=>{ if(!lastImage) return log('Sube primero una imagen (input).'); document.getElementById('timer').textContent = 'Analizando imagen...'; setTimeout(()=>{ try{ const params = { emaShort: Number(document.getElementById('emaShort').value) || 7, emaLong: Number(document.getElementById('emaLong').value) || 21, rsiP: Number(document.getElementById('rsiP').value) || 14, mode: document.getElementById('mode').value || 'equilibrado' }; const dynW = deriveWeightsFromPatterns(); const series = extractPriceSeriesFromImage(lastImage, 260, false); lastSeries = series; lastParams = params; displayResultFromSeries(series, params, dynW); }catch(e){ log('Error analizando: ' + e.message); } document.getElementById('timer').textContent = ''; }, 60); });
 
-document.getElementById('detectCandles').addEventListener('click', ()=>{ if(!lastSeries) return log('No hay serie para detectar velas.'); const candles = detectCandlesFromSeries(lastSeries, 80); drawSeries('chart', lastSeries, EMA_fromArray(lastSeries, Number(document.getElementById('emaShort').value)||7), EMA_fromArray(lastSeries, Number(document.getElementById('emaLong').value)||21), 'NEUTRO', candles); log('Velas detectadas: '+candles.length); });
+document.getElementById('detectCandles').addEventListener('click', ()=>{ if(!lastSeries) return log('No hay serie para detectar velas.'); const candles = detectCandlesFromSeries(lastSeries, 80); drawSeries('chart', lastSeries, EMA_fromArray(lastSeries, Number(document.getElementById('emaShort').value)||7), EMA_fromArray(lastSeries, Number(document.getElementById('emaLong').value)||21), 'NEUTRO', candles); log('Velas detectadas (básico): '+candles.length); });
+
+document.getElementById('detectAdvanced').addEventListener('click', ()=>{ if(!lastImage) return log('Sube primero una imagen.'); document.getElementById('timer').textContent = 'Detectando velas avanzadas...'; setTimeout(()=>{ try{ const candles = detectCandlesticksFromImage(lastImage, 6); if(!candles || !candles.length) { log('No se detectaron velas avanzadas. Probá con Auto-enhance o otra captura.'); document.getElementById('timer').textContent = ''; return; } // rebuild a price series from candle closes for indicators
+      const series = candles.map(c=>c.close); lastSeries = series; lastParams = {emaShort: Number(document.getElementById('emaShort').value)||7, emaLong: Number(document.getElementById('emaLong').value)||21, rsiP: Number(document.getElementById('rsiP').value)||14, mode: document.getElementById('mode').value||'equilibrado'}; drawSeries('chart', series, EMA_fromArray(series, lastParams.emaShort), EMA_fromArray(series, lastParams.emaLong), 'NEUTRO', candles); log('Velas detectadas (avanzado): '+candles.length); }catch(e){ log('Error detectando velas avanzadas: '+e.message); } document.getElementById('timer').textContent = ''; }, 120); });
 
 document.getElementById('backtestBtn').addEventListener('click', ()=>{ if(!lastSeries) return log('No hay serie para backtest.'); const params = lastParams || {emaShort:7, emaLong:21, rsiP:14, mode:'equilibrado'}; const res = backtestSimulate(lastSeries, params, 1000); log('Backtest final balance: $'+res.finalBalance.toFixed(2)+', PnL: $'+res.pnl.toFixed(2)+', trades: '+res.trades.length); document.getElementById('summary').innerHTML += `<div class="debug">Backtest PnL: $${res.pnl.toFixed(2)} — Trades: ${res.trades.length}</div>`; });
 
 function displayResultFromSeries(series, params, dynamicWeights){ if(!params) params = {emaShort:7, emaLong:21, rsiP:14, mode:'equilibrado'}; if(!series || series.length < 8){ log('Serie muy corta. Imagen inválida o resolución baja.'); return; } const res = decideFromSeries(series, params, dynamicWeights); drawSeries('chart', series, EMA_fromArray(series, params.emaShort), EMA_fromArray(series, params.emaLong), res.decision); document.getElementById('summary').innerHTML = `Decisión: <strong style="color:${res.decision==='COMPRAR'? '#22c55e':'#ef4444'}">${res.decision}</strong> — ${res.confidence}% confianza — Duración: ${res.duration}`; log(`Decisión: ${res.decision} (${res.confidence}% confianza)`); if(showDebug) document.getElementById('summary').innerHTML += `<div class="debug">${JSON.stringify(res.debug,null,2)}</div>`; console.log('DEBUG:', res.debug); lastParams = params; lastSeries = series; lastDecisionResult = res; }
 
 // export CSV
-let lastDecisionResult = null;
+let lastDecisionResultLocal = null;
 document.getElementById('exportCsv').addEventListener('click', ()=>{ if(!lastSeries) return log('No hay serie para exportar.'); let csv = 'index,price
 '; lastSeries.forEach((v,i)=> csv += `${i},${v}
-`); const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'series.csv'; a.click(); URL.r
+`); const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'series.csv'; a.click(); URL.revokeObjectURL(url); log('CSV exportado.'); });
+
+// save pattern (learning)
+document.getElementById('savePattern').addEventListener('click', ()=>{ if(!lastSeries || !lastDecisionResult) return log('No hay resultado para guardar.'); const params = lastParams || {emaShort:7, emaLong:21, rsiP:14, mode:'equilibrado'}; const tail = lastSeries.slice(-120); const bt = backtestSimulate(tail, params, 1000); const result = {decision: lastDecisionResult.decision, confidence:lastDecisionResult.confidence, pnl: bt.pnl, debug: lastDecisionResult.debug}; savePattern(tail, params, result); });
+
+document.getElementById('toggleDebug').addEventListener('click', ()=>{ showDebug = !showDebug; document.getElementById('toggleDebug').textContent = showDebug? 'Ocultar debug' : 'Mostrar debug'; if(lastSeries && lastParams) displayResultFromSeries(lastSeries, lastParams); });
+
+// placeholder draw
+(function initPlaceholder(){ const c = document.getElementById('chart'); resizeCanvasToDisplaySize(c); const ctx = c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.fillStyle = '#071022'; ctx.fillRect(0,0,c.clientWidth,c.clientHeight); ctx.fillStyle = '#94a3b8'; ctx.font = '16px Inter'; ctx.fillText('Sube aquí una captura del gráfico y pulsa Analizar', 20, 38); })();
+
+// accessibility: keyboard support
+window.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ const active = document.activeElement; if(active && active.id === 'imgInput') return; document.getElementById('analyzeBtn').focus(); } });
+
+</script>
+</body>
+</html>
