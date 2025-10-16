@@ -1,341 +1,216 @@
-<!DOCTYPE html>
+<!doctype html>
+
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
+<meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Signal Trading - Analizador por Imagen</title>
+<title>Signal Trading - Analizador por Imagen (Mejorado)</title>
 <style>
-body { background:#0f172a; color:#e2e8f0; font-family: 'Segoe UI', sans-serif; margin:0; padding:0; }
-header { background:#1e293b; padding:15px; text-align:center; font-size:1.2em; font-weight:bold; color:#38bdf8; }
-.container { display:grid; grid-template-columns: 1fr 300px; gap:10px; padding:10px; }
-.canvas-wrap { background:#0b1220; border-radius:10px; padding:10px; }
-canvas#chart { background:#0f172a; border-radius:8px; width:100%; height:400px; display:block; }
-.controls { background:#1e293b; border-radius:10px; padding:15px; display:flex; flex-direction:column; gap:10px; }
-.controls label { font-size:0.9em; color:#94a3b8; }
-button { background:#38bdf8; color:#0f172a; font-weight:bold; border:none; padding:10px; border-radius:8px; cursor:pointer; transition:0.15s; }
-button:hover { background:#0ea5e9; }
-.log { background:#0f172a; border-top:1px solid #1e293b; padding:10px; height:140px; overflow:auto; font-size:0.85em; }
-.green { color:#22c55e; } .red { color:#ef4444; }
-input[type=file]{ color:#94a3b8; }
-.small { font-size:0.85em; color:#94a3b8; }
+:root{--bg:#0f172a;--card:#0b1220;--muted:#94a3b8;--accent:#38bdf8}
+*{box-sizing:border-box}
+body{background:var(--bg);color:#e2e8f0;font-family:Inter, 'Segoe UI', sans-serif;margin:0;padding:0}
+header{background:#0b1220;padding:14px;text-align:center;font-size:1.05rem;font-weight:700;color:var(--accent)}
+.container{display:grid;grid-template-columns:1fr 320px;gap:12px;padding:12px}
+.canvas-wrap{background:var(--card);border-radius:10px;padding:10px;}
+#chart{background:transparent;border-radius:8px;display:block;width:100%;height:420px}
+.controls{background:#0b1220;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.controls label{font-size:0.9rem;color:var(--muted)}
+button{background:var(--accent);color:#0b1220;font-weight:700;border:none;padding:10px;border-radius:8px;cursor:pointer;transition:all .12s}
+button:active{transform:translateY(1px)}
+.log{background:#071022;border-top:1px solid #0b1220;padding:10px;height:140px;overflow:auto;font-size:0.85rem}
+.small{font-size:0.85rem;color:var(--muted)}
+.input-row{display:flex;gap:8px;align-items:center}
+.input-row input[type=number]{width:78px;padding:6px;border-radius:6px;border:1px solid #102033;background:#071022;color:#e2e8f0}
+#summary{padding:10px}
+.debug{font-family:monospace;font-size:0.85rem;color:#9ca3af;white-space:pre-wrap}
+.toggle{display:inline-block;padding:6px 8px;border-radius:6px;background:#071022;border:1px solid #123}
+.footer{padding:10px;text-align:center;color:var(--muted);font-size:0.85rem}
 </style>
 </head>
 <body>
-<header>📸 Signal Trading - Analizador por Imagen</header>
-
+<header>📸 Signal Trading - Analizador por Imagen (Mejorado)</header>
 <div class="container">
   <div class="canvas-wrap">
-    <canvas id="chart"></canvas>
-    <div id="summary" style="padding:10px;"></div>
-    <div class="small" style="padding:10px;">Sube una captura del gráfico (pantalla con la vela/curva). El analizador extrae la línea de precio y calcula indicadores técnicos.</div>
-  </div>
-
-  <div class="controls">
-    <label>Subir imagen:
+    <canvas id="chart" role="img" aria-label="Gráfico extraído"></canvas>
+    <div id="summary" class="small"></div>
+    <div class="small">Sube una captura del gráfico (captura que muestre la curva o velas). El analizador extrae una serie de precios y calcula indicadores técnicos.</div>
+  </div>  <div class="controls">
+    <label class="small">Subir imagen:
       <input id="imgInput" type="file" accept="image/*" />
-    </label>
+    </label><label class="small">Velocidad / Sensibilidad:
+  <select id="mode"><option value="agresivo">Agresivo</option><option selected value="equilibrado">Equilibrado</option><option value="conservador">Conservador</option></select>
+</label>
 
-    <label>Velocidad / Sensibilidad:
-      <select id="mode"><option value="agresivo">Agresivo</option><option selected value="equilibrado">Equilibrado</option><option value="conservador">Conservador</option></select>
-    </label>
-
-    <label>EMA Corta: <input id="emaShort" type="number" value="7" /></label>
-    <label>EMA Larga: <input id="emaLong" type="number" value="21" /></label>
-    <label>RSI Periodo: <input id="rsiP" type="number" value="14" /></label>
-
-    <button id="analyzeBtn">Analizar Imagen</button>
-    <button id="autoEnhance">Auto-enhance (mejor extracción)</button>
-
-    <div class="small" id="timer"></div>
-  </div>
+<div class="input-row">
+  <label class="small">EMA Corta: <input id="emaShort" type="number" value="7" min="1" /></label>
+  <label class="small">EMA Larga: <input id="emaLong" type="number" value="21" min="1" /></label>
+  <label class="small">RSI Periodo: <input id="rsiP" type="number" value="14" min="2" /></label>
 </div>
 
-<div class="log" id="log"></div>
+<div style="display:flex;gap:8px">
+  <button id="analyzeBtn">Analizar Imagen</button>
+  <button id="autoEnhance">Auto‑enhance</button>
+</div>
 
-<script>
-/* ---------------- UTILIDADES y LOG ---------------- */
-function log(msg){
-  const el=document.getElementById('log');
-  el.innerHTML += `<div>${new Date().toLocaleTimeString()} → ${msg}</div>`;
-  el.scrollTop = el.scrollHeight;
-}
+<div style="display:flex;gap:8px">
+  <button id="exportCsv">Exportar CSV</button>
+  <button id="toggleDebug" class="toggle">Mostrar debug</button>
+</div>
 
-/* ---------------- INDICADORES (mismas funciones que tenías) ---------------- */
-function EMA(data, period, accessor){
-  if(!data.length) return [];
+<div id="timer" class="small"></div>
+<div id="log" class="log" aria-live="polite"></div>
+
+  </div>
+</div>
+<div class="footer">Mejoras: reescalado de canvas para pantallas de alta DPI, inicialización EMA con SMA, manejo robusto de nulos y export CSV.</div><script>
+/* --------------------- UTIL --------------------- */
+const dpr = Math.max(1, window.devicePixelRatio || 1);
+function log(msg){ const el=document.getElementById('log'); el.innerHTML += `<div>${new Date().toLocaleTimeString()} → ${msg}</div>`; el.scrollTop = el.scrollHeight; }
+function clamp(n,a,b){return Math.max(a,Math.min(b,n));}
+
+/* --------------------- INDICADORES (mejoras) --------------------- */
+function SMA(values, period){ if(values.length < period) return null; let s=0; for(let i=0;i<period;i++) s+=values[i]; return s/period; }
+function EMA_fromArray(values, period){ // values: array of numbers
+  if(!values.length) return [];
+  const out = new Array(values.length).fill(null);
   const k = 2/(period+1);
-  const out = [];
-  let prev = accessor(data[0]);
-  out.push(prev);
-  for(let i=1;i<data.length;i++){
-    const v = accessor(data[i]);
-    prev = v * k + prev * (1-k);
-    out.push(prev);
+  // initialize with SMA of first 'period' values
+  if(values.length >= period){
+    let sma = 0; for(let i=0;i<period;i++) sma += values[i]; sma /= period; out[period-1] = sma;
+    let prev = sma;
+    for(let i=period;i<values.length;i++){ prev = values[i]*k + prev*(1-k); out[i] = prev; }
+    // fill earlier indices with first value for plotting
+    for(let i=0;i<period-1;i++) out[i] = values[0];
+  } else {
+    // not enough data: fallback to simple copy
+    for(let i=0;i<values.length;i++) out[i] = values[i];
   }
   return out;
 }
-function RSI(data, period, accessor){
-  if(data.length<=period) return new Array(data.length).fill(null);
+function RSI_fromArray(values, period){
+  const n = values.length; if(n<=1) return new Array(n).fill(null);
+  const out = new Array(n).fill(null);
   let gains=0, losses=0;
-  const out = new Array(data.length).fill(null);
-  for(let i=1;i<=period;i++){
-    const diff = accessor(data[i]) - accessor(data[i-1]);
-    if(diff>=0) gains += diff; else losses += -diff;
-  }
-  let avgGain = gains/period, avgLoss = losses/period;
-  out[period] = 100 - (100/(1 + avgGain/(avgLoss||1e-9)));
-  for(let i=period+1;i<data.length;i++){
-    const diff = accessor(data[i]) - accessor(data[i-1]);
-    const gain = diff>0?diff:0;
-    const loss = diff<0?-diff:0;
-    avgGain = (avgGain*(period-1) + gain)/period;
-    avgLoss = (avgLoss*(period-1) + loss)/period;
-    out[i] = 100 - (100/(1 + avgGain/(avgLoss||1e-9)));
+  for(let i=1;i<=period && i<n;i++){ const d = values[i]-values[i-1]; if(d>0) gains+=d; else losses += -d; }
+  let avgGain = gains/period || 0; let avgLoss = losses/period || 0;
+  if(n>period) out[period] = 100 - (100/(1 + (avgGain/(avgLoss||1e-9))));
+  for(let i=period+1;i<n;i++){
+    const d = values[i]-values[i-1]; const g = d>0?d:0; const l = d<0?-d:0;
+    avgGain = (avgGain*(period-1) + g)/period; avgLoss = (avgLoss*(period-1)+l)/period;
+    out[i] = 100 - (100/(1 + (avgGain/(avgLoss||1e-9))));
   }
   return out;
 }
-function MACD(data, fast, slow, signal, accessor){
-  const emaFast = EMA(data, fast, accessor);
-  const emaSlow = EMA(data, slow, accessor);
-  const macdLine = emaFast.map((v,i)=>v - (emaSlow[i]||v));
-  const signalLine = EMA(macdLine.map(v=>({v})), signal, d=>d.v);
-  const hist = macdLine.map((v,i)=>v - (signalLine[i]||0));
-  return {macdLine, signalLine, hist};
+function MACD_fromArray(values, fast=12, slow=26, signal=9){
+  const emaFast = EMA_fromArray(values, fast);
+  const emaSlow = EMA_fromArray(values, slow);
+  const macd = values.map((v,i)=> (emaFast[i]||0) - (emaSlow[i]||0));
+  const signalLine = EMA_fromArray(macd, signal);
+  const hist = macd.map((v,i)=> v - (signalLine[i]||0));
+  return {macd, signalLine, hist};
 }
-function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
 
-/* ---------------- DIBUJADO ---------------- */
-function drawSeries(canvasId, prices, emaShortArr, emaLongArr, signal){
-  const canvas=document.getElementById(canvasId);
-  const ctx=canvas.getContext('2d');
-  const w=canvas.width=canvas.clientWidth;
-  const h=canvas.height=canvas.clientHeight;
-  ctx.clearRect(0,0,w,h);
-  if(!prices.length) return;
-  const max=Math.max(...prices), min=Math.min(...prices);
-  const pad=20;
-  function xy(i,val){
-    const x = pad + i/(prices.length-1)*(w-2*pad||1);
-    const y = pad + (1 - (val - min)/(max-min||1))*(h-2*pad);
-    return {x,y};
-  }
+/* --------------------- CANVAS DRAW (retina ready) --------------------- */
+function resizeCanvasToDisplaySize(canvas){ const cssW = canvas.clientWidth, cssH = canvas.clientHeight; if(canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)){ canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr); canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px'; return true; } return false; }
+function drawSeries(canvasId, prices, emaS, emaL, decision){ const canvas = document.getElementById(canvasId); if(!canvas) return; resizeCanvasToDisplaySize(canvas); const ctx = canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); const w = canvas.clientWidth, h = canvas.clientHeight; ctx.clearRect(0,0,w,h);
+  if(!prices || !prices.length) return;
+  const max = Math.max(...prices), min=Math.min(...prices); const pad=18;
+  const xy = (i,val)=>{ const x = pad + (i/(prices.length-1))*(w-2*pad||1); const y = pad + (1 - (val-min)/(max-min||1))*(h-2*pad); return {x,y}; };
   // price line
-  ctx.lineWidth=2; ctx.strokeStyle="#38bdf8"; ctx.beginPath();
-  prices.forEach((p,i)=>{
-    const pt=xy(i,p);
-    if(i===0) ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y);
-  });
-  ctx.stroke();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#38bdf8'; ctx.beginPath(); prices.forEach((p,i)=>{ const pt=xy(i,p); i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y); }); ctx.stroke();
   // EMAs
-  if(emaShortArr && emaShortArr.length){
-    ctx.strokeStyle="#22c55e"; ctx.lineWidth=1.6; ctx.beginPath();
-    emaShortArr.forEach((v,i)=>{ const pt=xy(i,v); if(i===0) ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y);});
-    ctx.stroke();
-  }
-  if(emaLongArr && emaLongArr.length){
-    ctx.strokeStyle="#ef4444"; ctx.lineWidth=1.6; ctx.beginPath();
-    emaLongArr.forEach((v,i)=>{ const pt=xy(i,v); if(i===0) ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y);});
-    ctx.stroke();
-  }
-  // last point marker
-  const last = xy(prices.length-1, prices[prices.length-1]);
-  ctx.beginPath(); ctx.fillStyle = signal==="COMPRAR" ? "#22c55e" : "#ef4444";
-  ctx.arc(last.x, last.y, 6, 0, Math.PI*2); ctx.fill();
+  if(emaS && emaS.length){ ctx.lineWidth=1.4; ctx.strokeStyle='#22c55e'; ctx.beginPath(); emaS.forEach((v,i)=>{ const pt=xy(i,v); i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y); }); ctx.stroke(); }
+  if(emaL && emaL.length){ ctx.lineWidth=1.4; ctx.strokeStyle='#ef4444'; ctx.beginPath(); emaL.forEach((v,i)=>{ const pt=xy(i,v); i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y); }); ctx.stroke(); }
+  // last marker
+  const last = xy(prices.length-1, prices[prices.length-1]); ctx.beginPath(); ctx.fillStyle = decision==='COMPRAR'? '#22c55e' : '#ef4444'; ctx.arc(last.x,last.y,6,0,Math.PI*2); ctx.fill();
 }
 
-/* ---------------- PROCESAMIENTO DE IMAGEN (simple y robusto) ----------------
-   - Reduce ancho a maxCols (por ejemplo 200) para velocidad
-   - Convierte a gris, aplica sobel (gradiente) para bordes
-   - Para cada columna busca el "centroide vertical" de los bordes -> línea de precio
-   - Normaliza y devuelve arreglo de precios (float)
-*/
-function extractPriceSeriesFromImage(img, maxCols=200, doEnhance=false){
-  const off = document.createElement('canvas');
-  const iw = img.width, ih = img.height;
-  const scale = Math.min(1, maxCols / iw);
-  const w = Math.max(20, Math.round(iw * scale));
-  const h = Math.round(ih * scale);
-  off.width = w; off.height = h;
-  const ctx = off.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h);
-  let imgd = ctx.getImageData(0,0,w,h);
-  // grayscale
-  const gray = new Uint8ClampedArray(w*h);
-  for(let i=0;i<w*h;i++){
-    const r = imgd.data[i*4], g=imgd.data[i*4+1], b=imgd.data[i*4+2];
-    // optional contrast enhance
-    const v = 0.2126*r + 0.7152*g + 0.0722*b;
-    gray[i] = v;
+/* --------------------- IMAGE -> SERIES (mejor robustez) --------------------- */
+function extractPriceSeriesFromImage(img, maxCols=220, doEnhance=false){
+  // scale preserving aspect, use integer dimensions
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const scale = Math.min(1, maxCols/iw);
+  const w = Math.max(40, Math.round(iw * scale));
+  const h = Math.max(40, Math.round(ih * scale));
+  const off = document.createElement('canvas'); off.width = w; off.height = h; const ctx = off.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+  let imgd = ctx.getImageData(0,0,w,h), data = imgd.data;
+  // grayscale and optional contrast
+  const gray = new Float32Array(w*h);
+  for(let i=0;i<w*h;i++){ const r=data[i*4], g=data[i*4+1], b=data[i*4+2]; gray[i] = 0.2126*r + 0.7152*g + 0.0722*b; }
+  if(doEnhance){ // contrast stretch
+    let min=255, max=0; for(let i=0;i<gray.length;i++){ if(gray[i]<min) min=gray[i]; if(gray[i]>max) max=gray[i]; }
+    const range = Math.max(1, max-min); for(let i=0;i<gray.length;i++) gray[i] = (gray[i]-min)/range*255;
   }
-  // optional simple contrast/threshold enhancement
-  if(doEnhance){
-    // stretch histogram
-    let min=255,max=0;
-    for(let i=0;i<gray.length;i++){ if(gray[i]<min)min=gray[i]; if(gray[i]>max)max=gray[i]; }
-    const range = Math.max(1, max-min);
-    for(let i=0;i<gray.length;i++){
-      gray[i] = clamp(Math.round((gray[i]-min)/range*255),0,255);
-    }
-  }
-  // Sobel (simple) to get edges magnitude
+  // simple sobel (edge magnitude)
   const sobel = new Float32Array(w*h);
-  for(let y=1;y<h-1;y++){
-    for(let x=1;x<w-1;x++){
-      const i = y*w + x;
-      const gx =
-        -1*gray[i-w-1] + 1*gray[i-w+1] +
-        -2*gray[i-1]   + 2*gray[i+1] +
-        -1*gray[i+w-1] + 1*gray[i+w+1];
-      const gy =
-        -1*gray[i-w-1] -2*gray[i-w] -1*gray[i-w+1] +
-         1*gray[i+w-1] +2*gray[i+w] +1*gray[i+w+1];
-      sobel[i] = Math.hypot(gx,gy);
-    }
-  }
-  // For each column, compute weighted average (centroid) of edge positions (stronger edges count more)
-  const prices = [];
+  for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const i = y*w + x; const gx = -gray[i-w-1] + gray[i-w+1] -2*gray[i-1] + 2*gray[i+1] -gray[i+w-1] + gray[i+w+1]; const gy = -gray[i-w-1] -2*gray[i-w] - gray[i-w+1] + gray[i+w-1] + 2*gray[i+w] + gray[i+w+1]; sobel[i] = Math.hypot(gx,gy); }}
+  // column centroid of edges
+  const pricesY = new Array(w).fill(null);
   for(let x=0;x<w;x++){
     let sumW=0, sumY=0;
-    for(let y=0;y<h;y++){
-      const v = sobel[y*w + x];
-      if(v>10){ sumW += v; sumY += v*y; }
-    }
-    if(sumW>0) prices.push(sumY / sumW); else prices.push(null);
+    for(let y=0;y<h;y++){ const v = sobel[y*w + x]; if(v>8){ sumW += v; sumY += v*y; } }
+    if(sumW>0) pricesY[x] = sumY/sumW; else pricesY[x] = null;
   }
-  // Interpolate nulls
-  for(let i=0;i<prices.length;i++){
-    if(prices[i]===null){
-      // find nearest not-null left/right
-      let l=i-1; while(l>=0 && prices[l]===null) l--;
-      let r=i+1; while(r<prices.length && prices[r]===null) r++;
-      if(l>=0 && r<prices.length) prices[i] = prices[l] + (prices[r]-prices[l])*( (i-l)/(r-l) );
-      else if(l>=0) prices[i] = prices[l];
-      else if(r<prices.length) prices[i] = prices[r];
-      else prices[i]=h/2;
-    }
+  // interpolate nulls linearly
+  for(let i=0;i<w;i++){
+    if(pricesY[i]===null){ let l=i-1; while(l>=0 && pricesY[l]===null) l--; let r=i+1; while(r<w && pricesY[r]===null) r++; if(l>=0 && r<w) pricesY[i] = pricesY[l] + (pricesY[r]-pricesY[l])*((i-l)/(r-l)); else if(l>=0) pricesY[i] = pricesY[l]; else if(r<w) pricesY[i] = pricesY[r]; else pricesY[i] = h/2; }
   }
-  // invert and scale: lower y => higher price. We map [0,h] -> arbitrary price scale
-  const minY = Math.min(...prices), maxY = Math.max(...prices);
-  const series = prices.map(y => {
-    // invert
-    const p = (maxY - y) / (maxY - minY || 1);
-    // map to 100..200 arbitrary price base (we only need relative moves)
-    return 100 + p * 20;
-  });
+  // convert to relative price values (invert Y -> price)
+  const minY = Math.min(...pricesY), maxY = Math.max(...pricesY);
+  const series = pricesY.map(y => 100 + ((maxY - y)/(maxY-minY||1))*20);
   return series;
 }
 
-/* ---------------- DECISION (usa tus reglas previas; NO neutro) ---------------- */
+/* --------------------- DECISION LOGIC (sin neutro) --------------------- */
 function decideFromSeries(series, params){
-  // build fake candles from prices: open = previous, close = current
-  const data = series.map((p,i)=>({
-    t:i, open: i?series[i-1]:series[0], close:p
-  }));
-  const emaShortArr = EMA(data, params.emaShort, d=>d.close);
-  const emaLongArr = EMA(data, params.emaLong, d=>d.close);
-  const rsiArr = RSI(data, params.rsiP, d=>d.close);
-  const macd = MACD(data, params.emaShort, params.emaLong, 9, d=>d.close);
-
-  // compute subsignals at last index
-  const i = data.length - 1;
-  const subs = {trend:0, rsi:0, macd:0, recent:0};
-  if(emaShortArr[i] > (emaLongArr[i]||0)) subs.trend = 1; else subs.trend = 0;
-  if(rsiArr[i] !== null){
-    subs.rsi = clamp((rsiArr[i]-30)/(70-30), 0, 1); // 0..1 scaled
-  } else subs.rsi = 0.5;
-  subs.macd = macd.hist[i] > 0 ? 1 : 0;
-  // recent candles color sequence
+  // build close array
+  const closes = series.slice();
+  if(closes.length < 5) return {decision:'VENDER', confidence:12, duration:'Serie corta', debug:{}};
+  const emaShortArr = EMA_fromArray(closes, params.emaShort);
+  const emaLongArr  = EMA_fromArray(closes, params.emaLong);
+  const rsiArr = RSI_fromArray(closes, params.rsiP);
+  const macd = MACD_fromArray(closes, params.emaShort, params.emaLong, 9);
+  const i = closes.length - 1;
+  const subs = {};
+  subs.trend = (emaShortArr[i] > emaLongArr[i])?1:0;
+  subs.rsi = (rsiArr[i]===null)?0.5:clamp((rsiArr[i]-30)/(70-30),0,1);
+  subs.macd = (macd.hist[i] > 0)?1:0;
+  // recent candles heuristic
   let green=0, red=0;
-  for(let k=Math.max(0,data.length-20); k<data.length; k++){
-    if(data[k].close > data[k].open) green++; else if(data[k].close < data[k].open) red++;
-  }
-  if(green >= 3) subs.recent = 1;
-  if(red >= 3) subs.recent = -1;
-
+  for(let k=Math.max(0,closes.length-20); k<closes.length; k++){ if(k===0) continue; if(closes[k] > closes[k-1]) green++; else if(closes[k] < closes[k-1]) red++; }
+  subs.recent = green >= 3 ? 1 : (red >=3 ? -1 : 0);
   // weights
-  let w = {trend:0.28, rsi:0.18, macd:0.18, recent:0.18};
-  let buyScore = subs.trend * w.trend + subs.rsi * w.rsi + subs.macd * w.macd + (subs.recent===1? w.recent:0);
-  let sellScore = (1-subs.trend) * w.trend + (1-subs.rsi) * w.rsi + (subs.macd===0? w.macd:0) + (subs.recent===-1? w.recent:0);
-
-  // mode adjustment
+  let w = {trend:0.30, rsi:0.18, macd:0.18, recent:0.18};
+  let buyScore = subs.trend*w.trend + subs.rsi*w.rsi + subs.macd*w.macd + (subs.recent===1? w.recent:0);
+  let sellScore = (1-subs.trend)*w.trend + (1-subs.rsi)*w.rsi + (subs.macd===0? w.macd:0) + (subs.recent===-1? w.recent:0);
   if(params.mode==='agresivo'){ buyScore *= 1.12; sellScore *= 1.12; }
   if(params.mode==='conservador'){ buyScore *= 0.9; sellScore *= 0.9; }
-
   const decision = buyScore >= sellScore ? 'COMPRAR' : 'VENDER';
-  // confidence ~ normalized diff
   const conf = clamp(Math.abs(buyScore - sellScore) / (buyScore + sellScore + 1e-9) * 100 * (1 + Math.abs(subs.rsi-0.5)), 10, 99);
-  let duration = 'Baja confianza';
-  if(conf > 75) duration = params.mode==='agresivo' ? '1-5 min' : params.mode==='equilibrado' ? '3-15 min' : '10-30 min';
-  else if(conf > 50) duration = '5-20 min';
-  return {decision, confidence: Math.round(conf), duration, debug:{subs, buyScore, sellScore}};
+  let duration = 'Baja confianza'; if(conf > 75) duration = params.mode==='agresivo' ? '1-5 min' : params.mode==='equilibrado' ? '3-15 min' : '10-30 min'; else if(conf>50) duration = '5-20 min';
+  return {decision, confidence:Math.round(conf), duration, debug:{subs, buyScore, sellScore}};
 }
 
-/* ---------------- MAIN: manejo de UI e integración ---------------- */
-let lastImage = null;
-document.getElementById('imgInput').addEventListener('change', (ev)=>{
-  const f = ev.target.files && ev.target.files[0];
-  if(!f) return;
-  const url = URL.createObjectURL(f);
-  const img = new Image();
-  img.onload = ()=>{ lastImage = img; log("Imagen cargada. Listo para analizar."); URL.revokeObjectURL(url); };
-  img.onerror = ()=>{ log("Error al cargar la imagen."); URL.revokeObjectURL(url); };
-  img.src = url;
-});
+/* --------------------- MAIN UI --------------------- */
+let lastImage = null; let lastSeries = null; let lastParams = null; let showDebug = false;
+const imgInput = document.getElementById('imgInput'); imgInput.addEventListener('change', ev=>{ const f = ev.target.files && ev.target.files[0]; if(!f) return; const url = URL.createObjectURL(f); const img = new Image(); img.onload = ()=>{ lastImage = img; log('Imagen cargada. Listo para analizar.'); URL.revokeObjectURL(url); }; img.onerror = ()=>{ log('Error al cargar la imagen.'); URL.revokeObjectURL(url); }; img.src = url; });
 
-document.getElementById('autoEnhance').addEventListener('click', ()=>{
-  if(!lastImage) return log("Primero subí una imagen.");
-  // quick analyze with enhancement toggle
-  document.getElementById('timer').textContent = 'Procesando (auto-enhance)...';
-  setTimeout(()=>{
-    try{
-      const series = extractPriceSeriesFromImage(lastImage, 300, true);
-      displayResultFromSeries(series);
-    }catch(e){ log("Error: " + e.message); }
-    document.getElementById('timer').textContent = '';
-  }, 200);
-});
+document.getElementById('autoEnhance').addEventListener('click', ()=>{ if(!lastImage) return log('Primero subí una imagen.'); document.getElementById('timer').textContent = 'Procesando (auto-enhance)...'; setTimeout(()=>{ try{ const series = extractPriceSeriesFromImage(lastImage, 360, true); lastSeries = series; displayResultFromSeries(series); }catch(e){ log('Error: '+e.message); } document.getElementById('timer').textContent = ''; }, 80); });
 
-document.getElementById('analyzeBtn').addEventListener('click', ()=>{
-  if(!lastImage) return log("Sube primero una imagen (input).");
-  document.getElementById('timer').textContent = 'Analizando imagen...';
-  setTimeout(()=>{
-    try{
-      const params = {
-        emaShort: Number(document.getElementById('emaShort').value) || 7,
-        emaLong: Number(document.getElementById('emaLong').value) || 21,
-        rsiP: Number(document.getElementById('rsiP').value) || 14,
-        mode: document.getElementById('mode').value || 'equilibrado'
-      };
-      const series = extractPriceSeriesFromImage(lastImage, 250, false);
-      displayResultFromSeries(series, params);
-    }catch(e){
-      log("Error analizando: " + e.message);
-    }
-    document.getElementById('timer').textContent = '';
-  }, 200);
-});
+document.getElementById('analyzeBtn').addEventListener('click', ()=>{ if(!lastImage) return log('Sube primero una imagen (input).'); document.getElementById('timer').textContent = 'Analizando imagen...'; setTimeout(()=>{ try{ const params = { emaShort: Number(document.getElementById('emaShort').value) || 7, emaLong: Number(document.getElementById('emaLong').value) || 21, rsiP: Number(document.getElementById('rsiP').value) || 14, mode: document.getElementById('mode').value || 'equilibrado' }; const series = extractPriceSeriesFromImage(lastImage, 260, false); lastSeries = series; lastParams = params; displayResultFromSeries(series, params); }catch(e){ log('Error analizando: ' + e.message); } document.getElementById('timer').textContent = ''; }, 60); });
 
-function displayResultFromSeries(series, params){
-  if(!params) params = {emaShort:7, emaLong:21, rsiP:14, mode:'equilibrado'};
-  // ensure enough points
-  if(series.length < 10) { log("Serie muy corta. Imagen inválida o resolución baja."); return; }
-  const res = decideFromSeries(series, params);
-  // draw
-  drawSeries('chart', series, EMA(series.map(v=>({close:v})), params.emaShort, d=>d.close), EMA(series.map(v=>({close:v})), params.emaLong, d=>d.close), res.decision);
-  document.getElementById('summary').innerHTML = `Decisión: <b class="${res.decision==='COMPRAR'?'green':'red'}">${res.decision}</b> — ${res.confidence}% confianza — Duración: ${res.duration}`;
-  log(`Decisión: ${res.decision} (${res.confidence}% confianza)`);
-  // debug optional (small)
-  console.log("DEBUG:", res.debug);
-}
+function displayResultFromSeries(series, params){ if(!params) params = {emaShort:7, emaLong:21, rsiP:14, mode:'equilibrado'}; if(!series || series.length < 8){ log('Serie muy corta. Imagen inválida o resolución baja.'); return; } const res = decideFromSeries(series, params); drawSeries('chart', series, EMA_fromArray(series, params.emaShort), EMA_fromArray(series, params.emaLong), res.decision); document.getElementById('summary').innerHTML = `Decisión: <strong style="color:${res.decision==='COMPRAR'? '#22c55e':'#ef4444'}">${res.decision}</strong> — ${res.confidence}% confianza — Duración: ${res.duration}`; log(`Decisión: ${res.decision} (${res.confidence}% confianza)`); if(showDebug) document.getElementById('summary').innerHTML += `<div class="debug">${JSON.stringify(res.debug,null,2)}</div>`; console.log('DEBUG:', res.debug); }
 
-/* ---------------- Inicial: dibujar placeholder ---------------- */
-(function initPlaceholder(){
-  const canvas=document.getElementById('chart');
-  const ctx=canvas.getContext('2d');
-  canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
-  ctx.fillStyle = "#071022"; ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle = "#94a3b8"; ctx.font = "16px Segoe UI"; ctx.fillText("Sube aquí una captura del gráfico y pulsa Analizar", 20, 40);
-})();
-</script>
-</body>
+// export CSV
+document.getElementById('exportCsv').addEventListener('click', ()=>{ if(!lastSeries) return log('No hay serie para exportar.'); let csv = 'index,price\n'; lastSeries.forEach((v,i)=> csv += `${i},${v}\n`); const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'series.csv'; a.click(); URL.revokeObjectURL(url); log('CSV exportado.'); });
+
+document.getElementById('toggleDebug').addEventListener('click', ()=>{ showDebug = !showDebug; document.getElementById('toggleDebug').textContent = showDebug? 'Ocultar debug' : 'Mostrar debug'; if(lastSeries && lastParams) displayResultFromSeries(lastSeries, lastParams); });
+
+// placeholder draw
+(function initPlaceholder(){ const c = document.getElementById('chart'); resizeCanvasToDisplaySize(c); const ctx = c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.fillStyle = '#071022'; ctx.fillRect(0,0,c.clientWidth,c.clientHeight); ctx.fillStyle = '#94a3b8'; ctx.font = '16px Inter'; ctx.fillText('Sube aquí una captura del gráfico y pulsa Analizar', 20, 38); })();
+
+// accessibility: keyboard support
+window.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ const active = document.activeElement; if(active && active.id === 'imgInput') return; document.getElementById('analyzeBtn').focus(); } });
+
+</script></body>
 </html>
