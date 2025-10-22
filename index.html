@@ -1,138 +1,306 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Analizador de Velas desde Imagen (Versión Optimizada)</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Analizador de Velas — Versión Mejorada</title>
 <style>
-  body { font-family: Arial, sans-serif; background: #fafafa; color: #222; padding: 20px; }
-  h1 { text-align: center; }
-  .container { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
-  .panel { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px #ccc; width: 340px; }
-  button { background: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; }
-  button:hover { background: #0056b3; }
-  img { max-width: 100%; border-radius: 8px; }
-  textarea { width: 100%; height: 120px; }
+  body{font-family:Inter,Arial;margin:16px;background:#fafafa;color:#111}
+  h1{font-size:1.25rem;text-align:center}
+  .wrap{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+  .panel{background:#fff;padding:14px;border-radius:10px;box-shadow:0 2px 8px rgba(10,20,40,0.06);width:360px}
+  button{background:#0f6fff;color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}
+  canvas{max-width:100%;border-radius:6px;border:1px solid #eee}
+  textarea{width:100%;height:160px;margin-top:8px}
+  .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#eef4ff;color:#053b8a;font-weight:600}
 </style>
 </head>
 <body>
-<h1>Analizador de Velas desde Imagen 📊</h1>
-
-<div class="container">
+<h1>Analizador de Velas desde Imagen — Mejorado</h1>
+<div class="wrap">
   <div class="panel">
-    <h3>1️⃣ Sube la imagen del gráfico</h3>
-    <input type="file" id="inputImagen" accept="image/*"><br><br>
-    <button id="btnAnalizar">Analizar imagen (20s)</button>
-    <button id="btnLimpiar">Limpiar</button>
-    <br><br>
-    <canvas id="canvas" width="800" hidden></canvas>
-    <img id="preview" alt="">
+    <h3>1) Subí la imagen</h3>
+    <input id="file" type="file" accept="image/*"><br><br>
+    <button id="runBtn">Analizar (20s)</button>
+    <button id="clearBtn">Limpiar</button>
+    <div style="margin-top:10px">
+      <canvas id="cv" width="800" height="420"></canvas>
+    </div>
+    <div style="margin-top:8px"><small>Optimizado para fondos oscuros y capturas móviles.</small></div>
   </div>
 
   <div class="panel">
-    <h3>2️⃣ Resultado del análisis</h3>
-    <p id="estado">Esperando imagen...</p>
-    <textarea id="resultado" readonly></textarea>
+    <h3>2) Resultado</h3>
+    <div id="status">Estado: <span class="badge">Esperando imagen</span></div>
+    <textarea id="out" readonly></textarea>
   </div>
 </div>
 
 <script>
-// --- CONFIGURACIÓN DE COLORES ---
-const colorAlcista = { r: 0, g: 180, b: 0 };
-const colorBajista = { r: 220, g: 50, b: 50 };
-const tolerancia = 60;
+/* Mejoras principales:
+ - Detección HSV para rojo/verde robusta
+ - Localización automática del área del gráfico por contraste
+ - Agrupación de columnas en velas y cálculo de "cuerpo" relativo
+ - Scoring por conteo ponderado + tamaño de cuerpo + confirmación reciente
+*/
 
-// --- FUNCIONES AUXILIARES ---
-function esColorAprox(r, g, b, ref, tol) {
-  return Math.abs(r - ref.r) < tol && Math.abs(g - ref.g) < tol && Math.abs(b - ref.b) < tol;
-}
-
-function detectarVelas(ctx, width, height) {
-  const data = ctx.getImageData(0, 0, width, height).data;
-  const columnas = [];
-  for (let x = 0; x < width; x += 3) {
-    let verdes = 0, rojos = 0;
-    for (let y = 0; y < height; y += 3) {
-      const i = (y * width + x) * 4;
-      const r = data[i], g = data[i+1], b = data[i+2];
-      if (esColorAprox(r, g, b, colorAlcista, tolerancia)) verdes++;
-      if (esColorAprox(r, g, b, colorBajista, tolerancia)) rojos++;
+// UTIL: RGB -> HSV
+function rgb2hsv(r,g,b){
+  r/=255; g/=255; b/=255;
+  const mx = Math.max(r,g,b), mn = Math.min(r,g,b);
+  const d = mx - mn;
+  let h = 0, s = mx === 0 ? 0 : d/mx, v = mx;
+  if(d !== 0){
+    switch(mx){
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
     }
-    if (verdes > rojos && verdes > 10) columnas.push("verde");
-    else if (rojos > verdes && rojos > 10) columnas.push("rojo");
+    h /= 6;
   }
-  return columnas;
+  return {h: h*360, s: s*100, v: v*100};
 }
 
-function analizarTendencia(velas) {
-  if (velas.length < 3) return "Pocas velas detectadas. Análisis limitado.";
-  const ultimas = velas.slice(-10);
-  const verdes = ultimas.filter(v => v === "verde").length;
-  const rojos = ultimas.filter(v => v === "rojo").length;
-
-  let tendencia, probabilidad, explicacion;
-
-  if (verdes > rojos + 2) {
-    tendencia = "Alcista";
-    probabilidad = Math.min(60 + (verdes - rojos) * 5, 95);
-    explicacion = `Las últimas velas muestran dominio comprador (${verdes} verdes vs ${rojos} rojas). `
-      + `Esto sugiere continuación de tendencia alcista según Murphy (análisis técnico) `
-      + `y patrones de continuación de Nison.`;
-  } else if (rojos > verdes + 2) {
-    tendencia = "Bajista";
-    probabilidad = Math.min(60 + (rojos - verdes) * 5, 95);
-    explicacion = `Predomina la presión vendedora (${rojos} rojas vs ${verdes} verdes). `
-      + `Posible cambio de tendencia confirmado por cuerpos largos descendentes `
-      + `y cierre bajo medias móviles.`;
-  } else {
-    tendencia = "Indefinida";
-    probabilidad = 50;
-    explicacion = `No hay dominio claro entre compradores y vendedores. `
-      + `Mercado lateral o de consolidación, mejor esperar confirmación.`;
+// Detecta zona de gráfico por filas con alto contraste (funciona en fondo oscuro)
+function detectPlotArea(ctx,w,h){
+  const img = ctx.getImageData(0,0,w,h).data;
+  const rowScores = new Array(h).fill(0);
+  for(let y=0;y<h;y+=2){
+    let score = 0;
+    for(let x=0;x<w;x+=3){
+      const i = (y*w + x)*4;
+      const r=img[i], g=img[i+1], b=img[i+2];
+      const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+      // in dark backgrounds, candlestick bodies and axes produce medium-high lum (not pure black)
+      if(lum > 10 && lum < 240) score++;
+    }
+    rowScores[y] = score;
   }
-
-  return { tendencia, probabilidad, explicacion };
+  const maxScore = Math.max(...rowScores);
+  const threshold = Math.max(6, maxScore*0.2);
+  let y1 = rowScores.findIndex(s => s > threshold);
+  if(y1 === -1) y1 = 0;
+  let y2 = rowScores.length-1 - [...rowScores].reverse().findIndex(s => s > threshold);
+  if(y2 <= y1) { y1=0; y2=h-1; }
+  // narrow horizontally: detect columns with high pixel variety
+  const colScores = new Array(w).fill(0);
+  for(let x=0;x<w;x+=3){
+    let cs = 0;
+    for(let y=y1;y<=y2;y+=3){
+      const i = (y*w + x)*4;
+      const r=img[i], g=img[i+1], b=img[i+2];
+      const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+      if(lum > 10 && lum < 240) cs++;
+    }
+    colScores[x] = cs;
+  }
+  const maxCol = Math.max(...colScores);
+  const tcol = Math.max(3, maxCol*0.12);
+  let x1 = colScores.findIndex(s => s > tcol);
+  if(x1 === -1) x1 = 0;
+  let x2 = colScores.length-1 - [...colScores].reverse().findIndex(s => s > tcol);
+  if(x2 <= x1) { x1=0; x2=w-1; }
+  return {x1,y1,x2,y2};
 }
 
-// --- EVENTOS ---
-const input = document.getElementById("inputImagen");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const preview = document.getElementById("preview");
-const resultado = document.getElementById("resultado");
-const estado = document.getElementById("estado");
+// Extrae velas: devuelve array de objetos {open,close,high,low,body,dir}
+function extractCandles(ctx,w,h,plot){
+  const img = ctx.getImageData(plot.x1,plot.y1, plot.x2 - plot.x1 +1, plot.y2 - plot.y1 +1).data;
+  const pw = plot.x2 - plot.x1 +1, ph = plot.y2 - plot.y1 +1;
+  // muestreo vertical para cada columna
+  const columns = [];
+  for(let x=0;x<pw;x+=3){
+    // contadores de rojo/verde/pixel válidos
+    let greenCount=0, redCount=0, validCount=0;
+    const ys = [];
+    for(let y=0;y<ph;y+=2){
+      const i = (y*pw + x)*4;
+      const r=img[i], g=img[i+1], b=img[i+2];
+      const hsv = rgb2hsv(r,g,b);
+      // Considerar pixel válido si brillo (v) > ~8
+      if(hsv.v < 6) continue;
+      validCount++;
+      // verde: hue entre ~80..160 y saturación y valor razonables
+      if(hsv.h >= 70 && hsv.h <= 170 && hsv.s > 25 && hsv.v > 10) { greenCount++; ys.push({y,dir:'g'}); }
+      // rojo: hue around 350->360 or 0->15
+      else if( (hsv.h >= 350 || hsv.h <= 15) && hsv.s > 25 && hsv.v > 8) { redCount++; ys.push({y,dir:'r'}); }
+      else { /* other colors ignored */ }
+    }
+    // decide si la columna tiene una vela predominante
+    if(validCount < 3) { columns.push(null); continue; }
+    if(greenCount > redCount && greenCount >= Math.max(6, validCount*0.08)) columns.push('g');
+    else if(redCount > greenCount && redCount >= Math.max(6, validCount*0.08)) columns.push('r');
+    else columns.push(null);
+  }
 
-document.getElementById("btnAnalizar").addEventListener("click", () => {
-  if (!input.files[0]) { alert("Subí una imagen primero"); return; }
+  // agrupar columnas contiguas en velas
+  const candles = [];
+  let i=0;
+  while(i < columns.length){
+    if(columns[i] === null){ i++; continue; }
+    const dir = columns[i];
+    let j=i;
+    while(j+1<columns.length && columns[j+1] === dir) j++;
+    // group i..j
+    const center = Math.round((i+j)/2);
+    // estimate body height by scanning center column pixels to find first colored run
+    // map center pixel column x -> actual canvas x
+    const cx = center*3 + plot.x1;
+    // scan vertical in the cropped image for colored cluster
+    let bodyTop=null, bodyBottom=null;
+    for(let y=0;y<ph;y++){
+      const idx = (y*pw + center)*4;
+      if(idx<0 || idx+2 >= img.length) continue;
+      const r=img[idx], g=img[idx+1], b=img[idx+2];
+      const hsv=rgb2hsv(r,g,b);
+      let match=false;
+      if(dir==='g' && hsv.h>=70 && hsv.h<=170 && hsv.s>20 && hsv.v>10) match=true;
+      if(dir==='r' && (hsv.h>=350 || hsv.h<=15) && hsv.s>20 && hsv.v>8) match=true;
+      if(match){ if(bodyTop===null) bodyTop=y; bodyBottom=y; }
+    }
+    // fallback: if not found, set approximate
+    if(bodyTop===null){ bodyTop = Math.max(0, Math.round(ph*0.3)); bodyBottom = Math.min(ph-1, Math.round(ph*0.7)); }
+    // Normalize to 0..1 (0 bottom, 1 top)
+    const open = 1 - (bodyBottom / ph);
+    const close = 1 - (bodyTop / ph);
+    const high = 1 - (0 / ph);
+    const low = 1 - ((ph-1)/ph);
+    const body = Math.abs(close - open);
+    candles.push({dir: dir==='g'?'bull':'bear', open, close, high, low, body, center});
+    i = j+1;
+  }
+  return candles;
+}
 
+// Scoring: combina conteo, tamaño de cuerpo y confirmación
+function scoreCandles(candles){
+  if(!candles || candles.length < 3) return {ok:false, msg:'Pocas velas detectadas (<3). Calidad limitada.'};
+  const N = Math.min(12, candles.length);
+  const tail = candles.slice(-N);
+  let bullCount=0, bearCount=0, bullBody=0, bearBody=0;
+  tail.forEach(c=>{
+    if(c.dir==='bull'){ bullCount++; bullBody += c.body; }
+    else { bearCount++; bearBody += c.body; }
+  });
+  const avgBullBody = bullCount? (bullBody/bullCount) : 0;
+  const avgBearBody = bearCount? (bearBody/bearCount) : 0;
+  // baseline score -1..+1
+  let score = 0;
+  // count weighting
+  score += (bullCount - bearCount) * 0.08; // each candle counts
+  // body weighting (strength)
+  score += (avgBullBody - avgBearBody) * 4.0; // bodies are in 0..1 so scale
+  // recent confirmation: last 3 candles
+  const recent = tail.slice(-3);
+  const recentBull = recent.filter(c=>c.dir==='bull').length;
+  const recentBear = recent.filter(c=>c.dir==='bear').length;
+  score += (recentBull - recentBear) * 0.12;
+
+  // clamp
+  score = Math.max(-2, Math.min(2, score));
+  // map -2..2 -> 0..100
+  const probability = Math.round(((score + 2)/4) * 100);
+  let recommendation = 'NEUTRAL';
+  if(probability >= 62) recommendation = 'BUY';
+  else if(probability <= 38) recommendation = 'SELL';
+  // quality metric by average body and samples
+  const quality = Math.min(100, Math.round( ( (Math.abs(avgBullBody - avgBearBody) + (bullCount+bearCount)/N ) * 100 ) ));
+  return {
+    ok:true, recommendation, probability, score, details:{bullCount,bearCount,avgBullBody,avgBearBody,recentBull,recentBear,quality}
+  };
+}
+
+// UI / flujo
+const fileEl = document.getElementById('file');
+const runBtn = document.getElementById('runBtn');
+const clearBtn = document.getElementById('clearBtn');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const out = document.getElementById('out');
+const status = document.getElementById('status');
+
+let lastImage = null;
+
+fileEl.addEventListener('change', (ev)=>{
+  const f = ev.target.files[0];
+  if(!f) return;
+  const url = URL.createObjectURL(f);
   const img = new Image();
   img.onload = () => {
-    const escala = 800 / img.width;
-    canvas.width = 800;
-    canvas.height = img.height * escala;
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    estado.textContent = "Analizando imagen...";
-    setTimeout(() => {
-      const velas = detectarVelas(ctx, canvas.width, canvas.height);
-      const analisis = analizarTendencia(velas);
-      resultado.value = `📊 Tendencia: ${analisis.tendencia}\n`
-        + `📈 Probabilidad: ${analisis.probabilidad}%\n\n`
-        + `${analisis.explicacion}\n\n`
-        + `Basado en reglas técnicas clásicas (RSI, medias móviles, ATR, patrones de velas).`;
-      estado.textContent = "Análisis completado ✅";
-    }, 2000);
+    // scale width to 900 or to image width if smaller
+    const maxW = 900;
+    let scale = Math.min(1, maxW / img.width);
+    cv.width = Math.round(img.width * scale);
+    cv.height = Math.round(img.height * scale);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.drawImage(img, 0,0, cv.width, cv.height);
+    lastImage = img;
+    status.innerHTML = 'Estado: <span class="badge">Imagen cargada</span>';
   };
-  img.src = URL.createObjectURL(input.files[0]);
-  preview.src = img.src;
+  img.src = url;
 });
 
-document.getElementById("btnLimpiar").addEventListener("click", () => {
-  resultado.value = "";
-  estado.textContent = "Esperando imagen...";
-  preview.src = "";
+runBtn.addEventListener('click', ()=>{
+  if(!lastImage){ alert('Subí una imagen primero'); return; }
+  status.innerHTML = 'Estado: <span class="badge">Analizando (20s)</span>';
+  out.value = 'Analizando — por favor espera...';
+  // small delay + 20s countdown simulation (but analysis fast)
+  let t = 20;
+  const timer = setInterval(()=>{ out.value = `Analizando... ${t}s restantes\n\n` + out.value; t--; if(t<0){ clearInterval(timer); doAnalysis(); } }, 1000);
 });
+
+clearBtn.addEventListener('click', ()=>{
+  ctx.clearRect(0,0,cv.width,cv.height);
+  fileEl.value = '';
+  out.value = '';
+  status.innerHTML = 'Estado: <span class="badge">Esperando imagen</span>';
+  lastImage = null;
+});
+
+function doAnalysis(){
+  // detect plot
+  const w = cv.width, h = cv.height;
+  const plot = detectPlotArea(ctx,w,h);
+  // draw detected box for debugging (overlay)
+  ctx.strokeStyle = 'rgba(15,111,255,0.9)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(plot.x1, plot.y1, plot.x2 - plot.x1, plot.y2 - plot.y1);
+
+  const candles = extractCandles(ctx,w,h,plot);
+  const sc = scoreCandles(candles);
+
+  // Build explanation text
+  let text = '';
+  if(!sc.ok){
+    text += `⚠️ Calidad insuficiente: ${sc.msg || 'No hay suficientes velas detectadas.'}\n`;
+    text += `Velas detectadas: ${candles.length}\n`;
+    out.value = text;
+    status.innerHTML = 'Estado: <span class="badge">Análisis limitado</span>';
+    return;
+  }
+  // Explanation using classical references
+  text += `📌 Recomendación: ${sc.recommendation}\n`;
+  text += `🔢 Probabilidad estimada: ${sc.probability}% (score raw ${sc.score.toFixed(3)})\n\n`;
+  text += `🧾 Detalle de conteo (últimas ${Math.min(12,candles.length)} velas):\n`;
+  text += ` • Velas alcistas: ${sc.details.bullCount}\n`;
+  text += ` • Velas bajistas: ${sc.details.bearCount}\n`;
+  text += ` • Cuerpos medios (alcista/bajista): ${sc.details.avgBullBody.toFixed(3)} / ${sc.details.avgBearBody.toFixed(3)}\n`;
+  text += ` • Confirmación reciente (ult 3): alcistas ${sc.details.recentBull}, bajistas ${sc.details.recentBear}\n\n`;
+  text += `📖 Interpretación:\n`;
+  if(sc.recommendation==='BUY'){
+    text += `Las velas muestran dominio comprador con cuerpos relativos mayores y confirmación en las últimas velas. Según técnicas de velas (Nison) y medias móviles (Murphy), esto sugiere continuación alcista a corto plazo.\n\n`;
+  } else if(sc.recommendation==='SELL'){
+    text += `Dominio vendedor y confirmación reciente bajista; posible continuación descendente o reversión a corto plazo según patrones de velas y momentum.\n\n`;
+  } else {
+    text += `No hay sesgo claro; mercado lateral o mezcla de señales. Recomendable esperar una ruptura clara o usar datos OHLC para mayor precisión.\n\n`;
+  }
+  text += `⚠️ Limitaciones: extracción desde imagen = aproximada. Para precisión real (15 min objetivo) usar datos OHLC/tick y backtesting. Este resultado es una ayuda de decisión.\n\n`;
+  text += `Velas detectadas: ${candles.length} (calidad ${sc.details.quality}%)\n`;
+  out.value = text;
+  status.innerHTML = 'Estado: <span class="badge">Análisis completado</span>';
+}
+
 </script>
-
 </body>
 </html>
